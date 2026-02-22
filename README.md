@@ -4,6 +4,8 @@
 <img width="35%" alt="image" src="https://github.com/user-attachments/assets/392efef1-6531-43cd-8d3e-649d0ecd37c8" />
 <img width="45%" alt="image" src="https://github.com/user-attachments/assets/2e01038f-3c29-49f0-b474-2dc558634d5d" />
 
+### **Roadmap**
+You can find the roadmap here: [ROADMAP.md](https://github.com/aweeri/TLEscope/blob/main/ROADMAP.md)
 
 ### ​**Features**
 - **​Dual-View Visualization**: Seamlessly toggle between an interactive 3D orbital space and a 2D projection featuring accurate satellite ground tracks.
