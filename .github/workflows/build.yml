@@ -5,8 +5,14 @@ on:
     branches: [ "main", "master" ]
     tags:
       - 'v*' # Triggers stable release on version tags
+    paths-ignore:
+      - 'README.md'
+      - 'ROADMAP.md'
   pull_request:
     branches: [ "main", "master" ]
+    paths-ignore:
+      - 'README.md'
+      - 'ROADMAP.md'
 
 jobs:
   build-linux:
