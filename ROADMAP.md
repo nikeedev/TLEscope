@@ -13,6 +13,6 @@
 - [ ] satellite search with a click to target feature
 
 ### Antenna helpers
-- [ ] hamlib antenna rotator support
+- [ ] antenna rotator support
 - [ ] satellite finder with a window showing satellites in view;
 takes manual/rotator feedback az/el values and manual beam width and projects satellites onto a window. in addition to this when active, display the effective beam in 3d mode
