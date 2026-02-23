@@ -9,3 +9,6 @@ build/
 
 # Compoile Commands CLANGD
 /compile_commands.json
+
+# csv exports
+*.csv

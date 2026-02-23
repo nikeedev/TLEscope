@@ -448,3 +448,46 @@ Vector3 calculate_moon_position(double current_time_days) {
 
     return pos;
 }
+
+double get_sat_range(Satellite* sat, double epoch, Marker obs) {
+    double t_unix = get_unix_from_epoch(epoch);
+    double gmst = epoch_to_gmst(epoch);
+    
+    Vector3 eci_pos = calculate_position(sat, t_unix);
+    double sat_r = Vector3Length(eci_pos);
+    if (sat_r == 0) return 0.0;
+    
+    double sat_lat = asin(eci_pos.y / sat_r);
+    double sat_lon_eci = atan2(-eci_pos.z, eci_pos.x);
+    double theta = gmst * DEG2RAD; 
+    double sat_lon_ecef = sat_lon_eci - theta;
+
+    double s_x = sat_r * cos(sat_lat) * cos(sat_lon_ecef);
+    double s_y = sat_r * cos(sat_lat) * sin(sat_lon_ecef);
+    double s_z = sat_r * sin(sat_lat);
+
+    double lat_rad = obs.lat * DEG2RAD;
+    double lon_rad = obs.lon * DEG2RAD;
+    double obs_rad = EARTH_RADIUS_KM + obs.alt/1000.0;
+
+    double o_x = obs_rad * cos(lat_rad) * cos(lon_rad);
+    double o_y = obs_rad * cos(lat_rad) * sin(lon_rad);
+    double o_z = obs_rad * sin(lat_rad);
+
+    double dx = s_x - o_x;
+    double dy = s_y - o_y;
+    double dz = s_z - o_z;
+    
+    return sqrt(dx*dx + dy*dy + dz*dz);
+}
+
+double calculate_doppler_freq(Satellite* sat, double epoch, Marker obs, double base_freq) {
+    // line-of-sight range
+    double dt = 0.1 / 86400.0; // 0.1 seconds step
+    double r1 = get_sat_range(sat, epoch - dt, obs);
+    double r2 = get_sat_range(sat, epoch + dt, obs);
+    double range_rate = (r2 - r1) / 0.2; // km/s
+    
+    double c = 299792.458; // in km/s
+    return base_freq * (c / (c + range_rate));
+}

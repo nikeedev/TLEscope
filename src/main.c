@@ -407,6 +407,7 @@ int main(void) {
     bool show_settings = false;
     bool show_passes_dialog = false;
     bool show_polar_dialog = false;
+    bool show_tle_warning = false;
     int selected_pass_idx = -1;
     
     float hw_x = 100.0f, hw_y = 250.0f;
@@ -421,6 +422,19 @@ int main(void) {
     bool drag_time_dialog = false;
     Vector2 drag_time_off = {0};
     float td_x = 300.0f, td_y = 100.0f;
+
+    // Doppler UI state variables
+    bool show_doppler_dialog = false;
+    int doppler_pass_idx = -1;
+    char text_doppler_freq[32] = "137625000"; 
+    char text_doppler_res[32] = "1"; 
+    char text_doppler_file[128] = "doppler_export.csv";
+    bool edit_doppler_freq = false;
+    bool edit_doppler_res = false;
+    bool edit_doppler_file = false;
+    bool drag_doppler = false;
+    Vector2 drag_doppler_off = {0};
+    float dop_x = 200.0f, dop_y = 150.0f;
     
     char text_year[8] = "2026", text_month[4] = "1", text_day[4] = "1";
     char text_hour[4] = "12", text_min[4] = "0", text_sec[4] = "0";
@@ -432,7 +446,8 @@ int main(void) {
     while (!WindowShouldClose()) {
 
         bool is_typing = edit_year || edit_month || edit_day || 
-                         edit_hour || edit_min || edit_sec || edit_unix;
+                         edit_hour || edit_min || edit_sec || edit_unix ||
+                         edit_doppler_freq || edit_doppler_res || edit_doppler_file;
 
         // handle keyboard shortcuts
         if (!is_typing) {
@@ -448,6 +463,7 @@ int main(void) {
             if (IsKeyPressed(KEY_PERIOD)) { is_auto_warping = false; time_multiplier = StepTimeMultiplier(time_multiplier, true); }
             if (IsKeyPressed(KEY_COMMA)) { is_auto_warping = false; time_multiplier = StepTimeMultiplier(time_multiplier, false); }
             if (IsKeyPressed(KEY_M)) is_2d_view = !is_2d_view;
+            if (IsKeyPressed(KEY_RIGHT_BRACKET)) show_tle_warning = !show_tle_warning;
             
             if (IsKeyPressed(KEY_SLASH)) {
                 is_auto_warping = false;
@@ -611,11 +627,13 @@ int main(void) {
         Rectangle helpWindow = { hw_x, hw_y, 900 * cfg.ui_scale, 140 * cfg.ui_scale };
         Rectangle settingsWindow = { sw_x, sw_y, 220 * cfg.ui_scale, 140 * cfg.ui_scale };
         Rectangle timeWindow = { td_x, td_y, 520 * cfg.ui_scale, 240 * cfg.ui_scale };
+        Rectangle tleWindow = { (GetScreenWidth() - 300*cfg.ui_scale)/2.0f, (GetScreenHeight() - 130*cfg.ui_scale)/2.0f, 300*cfg.ui_scale, 130*cfg.ui_scale };
         
         float pass_w = 480 * cfg.ui_scale;
         float pass_h = (60 + (num_passes == 0 ? 1 : num_passes) * 55) * cfg.ui_scale;
         Rectangle passesWindow = { pd_x, pd_y, pass_w, pass_h };
-        Rectangle polarWindow = { pl_x, pl_y, 300 * cfg.ui_scale, 360 * cfg.ui_scale };
+        Rectangle polarWindow = { pl_x, pl_y, 300 * cfg.ui_scale, 390 * cfg.ui_scale };
+        Rectangle dopplerWindow = { dop_x, dop_y, 700 * cfg.ui_scale, 450 * cfg.ui_scale };
 
         Rectangle btnHelp = { 10 * cfg.ui_scale, GetScreenHeight() - 40 * cfg.ui_scale, 30 * cfg.ui_scale, 30 * cfg.ui_scale };
         Rectangle btnSet  = { 45 * cfg.ui_scale, GetScreenHeight() - 40 * cfg.ui_scale, 30 * cfg.ui_scale, 30 * cfg.ui_scale };
@@ -643,6 +661,8 @@ int main(void) {
         if (show_time_dialog && CheckCollisionPointRec(GetMousePosition(), timeWindow)) over_ui = true;
         if (show_passes_dialog && CheckCollisionPointRec(GetMousePosition(), passesWindow)) over_ui = true;
         if (show_polar_dialog && CheckCollisionPointRec(GetMousePosition(), polarWindow)) over_ui = true;
+        if (show_doppler_dialog && CheckCollisionPointRec(GetMousePosition(), dopplerWindow)) over_ui = true;
+        if (show_tle_warning && CheckCollisionPointRec(GetMousePosition(), tleWindow)) over_ui = true;
 
         // handle clicking/locking on objects
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
@@ -650,6 +670,7 @@ int main(void) {
                 edit_year = false; edit_month = false; edit_day = false;
                 edit_hour = false; edit_min = false; edit_sec = false;
                 edit_unix = false;
+                edit_doppler_freq = false; edit_doppler_res = false; edit_doppler_file = false;
 
                 selected_sat = hovered_sat; 
 
@@ -1072,6 +1093,91 @@ int main(void) {
             DrawUIText("REAL TIME", 255*cfg.ui_scale, 40*cfg.ui_scale, 16*cfg.ui_scale, cfg.ui_accent);
         }
 
+        // render satellite info box near the icon (moved before UI rendering for under-draw)
+        if (active_sat) {
+            Vector2 screenPos;
+            if (is_2d_view) {
+                float sat_mx, sat_my;
+                get_map_coordinates(active_sat->current_pos, gmst_deg, cfg.earth_rotation_offset, map_w, map_h, &sat_mx, &sat_my);
+                float cam_x = camera2d.target.x;
+                
+                while (sat_mx - cam_x > map_w/2.0f) sat_mx -= map_w;
+                while (sat_mx - cam_x < -map_w/2.0f) sat_mx += map_w;
+                
+                screenPos = GetWorldToScreen2D((Vector2){sat_mx, sat_my}, camera2d);
+            } else {
+                screenPos = GetWorldToScreen(Vector3Scale(active_sat->current_pos, 1.0f/DRAW_SCALE), camera3d);
+            }
+            
+            float boxW = 280*cfg.ui_scale;
+            float boxH = 185*cfg.ui_scale;
+            float boxX = screenPos.x + (15*cfg.ui_scale);
+            float boxY = screenPos.y + (15*cfg.ui_scale);
+            
+            if (boxX + boxW > GetScreenWidth()) boxX = screenPos.x - boxW - (15*cfg.ui_scale);
+            if (boxY + boxH > GetScreenHeight()) boxY = screenPos.y - boxH - (15*cfg.ui_scale);
+
+            DrawRectangle(boxX - (5*cfg.ui_scale), boxY - (5*cfg.ui_scale), boxW, boxH, cfg.ui_bg);
+            
+            Color titleColor = (active_sat == hovered_sat) ? cfg.sat_highlighted : cfg.sat_selected;
+            DrawUIText(active_sat->name, boxX, boxY, 20*cfg.ui_scale, titleColor);
+            
+            double r_km = Vector3Length(active_sat->current_pos);
+            double v_kms = sqrt(MU * (2.0/r_km - 1.0/active_sat->semi_major_axis));
+            float lat_deg = asinf(active_sat->current_pos.y / r_km) * RAD2DEG;
+            float lon_deg = (atan2f(-active_sat->current_pos.z, active_sat->current_pos.x) - ((gmst_deg + cfg.earth_rotation_offset)*DEG2RAD)) * RAD2DEG;
+            
+            while (lon_deg > 180.0f) lon_deg -= 360.0f;
+            while (lon_deg < -180.0f) lon_deg += 360.0f;
+
+            char info[256];
+            sprintf(info, "Inc: %.2f deg\nRAAN: %.2f deg\nEcc: %.5f\nAlt: %.2f km\nSpd: %.2f km/s\nLat: %.2f deg\nLon: %.2f deg", 
+                    active_sat->inclination*RAD2DEG, active_sat->raan*RAD2DEG, active_sat->eccentricity, r_km-EARTH_RADIUS_KM, v_kms, lat_deg, lon_deg);
+            DrawUIText(info, boxX, boxY + (28*cfg.ui_scale), 18*cfg.ui_scale, cfg.text_main);
+
+            // draw textual altitude info at peri/apo points
+            Vector2 periScreen, apoScreen;
+            bool show_peri = true;
+            bool show_apo = true;
+
+            double t_peri_unix, t_apo_unix;
+            get_apsis_times(active_sat, current_epoch, &t_peri_unix, &t_apo_unix);
+
+            double real_rp = Vector3Length(calculate_position(active_sat, t_peri_unix));
+            double real_ra = Vector3Length(calculate_position(active_sat, t_apo_unix));
+            
+            if (is_2d_view) {
+                Vector2 p2, a2;
+                get_apsis_2d(active_sat, current_epoch, false, gmst_deg, cfg.earth_rotation_offset, map_w, map_h, &p2);
+                get_apsis_2d(active_sat, current_epoch, true, gmst_deg, cfg.earth_rotation_offset, map_w, map_h, &a2);
+                float cam_x = camera2d.target.x;
+                
+                while (p2.x - cam_x > map_w/2.0f) p2.x -= map_w; 
+                while (p2.x - cam_x < -map_w/2.0f) p2.x += map_w;
+                while (a2.x - cam_x > map_w/2.0f) a2.x -= map_w; 
+                while (a2.x - cam_x < -map_w/2.0f) a2.x += map_w;
+                
+                periScreen = GetWorldToScreen2D(p2, camera2d);
+                apoScreen = GetWorldToScreen2D(a2, camera2d);
+            } else {
+                Vector3 draw_p = Vector3Scale(calculate_position(active_sat, t_peri_unix), 1.0f/DRAW_SCALE);
+                Vector3 draw_a = Vector3Scale(calculate_position(active_sat, t_apo_unix), 1.0f/DRAW_SCALE);
+                
+                if (IsOccludedByEarth(camera3d.position, draw_p, draw_earth_radius)) show_peri = false;
+                if (IsOccludedByEarth(camera3d.position, draw_a, draw_earth_radius)) show_apo = false;
+                
+                periScreen = GetWorldToScreen(draw_p, camera3d);
+                apoScreen = GetWorldToScreen(draw_a, camera3d);
+            }
+            
+            float text_size = 16.0f * cfg.ui_scale;
+            float x_offset = 20.0f * cfg.ui_scale;
+            float y_offset = text_size / 2.2f;
+
+            if (show_peri) DrawUIText(TextFormat("Peri: %.0f km", real_rp-EARTH_RADIUS_KM), periScreen.x + x_offset, periScreen.y - y_offset, text_size, cfg.periapsis);
+            if (show_apo) DrawUIText(TextFormat("Apo: %.0f km", real_ra-EARTH_RADIUS_KM), apoScreen.x + x_offset, apoScreen.y - y_offset, text_size, cfg.apoapsis);
+        }
+
         // global UI style configuration
         GuiSetStyle(DEFAULT, TEXT_SIZE, 16 * cfg.ui_scale);
         GuiSetStyle(DEFAULT, BACKGROUND_COLOR, ColorToInt(cfg.ui_primary));
@@ -1390,94 +1496,135 @@ int main(void) {
                 } else {
                     DrawUIText("Pass Complete", pl_x + 20*cfg.ui_scale, pl_y + 295*cfg.ui_scale, 16*cfg.ui_scale, cfg.text_secondary);
                 }
+
+                // add doppler button right below the tracking info
+                if (GuiButton((Rectangle){ pl_x + 20*cfg.ui_scale, pl_y + 345*cfg.ui_scale, 260*cfg.ui_scale, 30*cfg.ui_scale }, "#125# Doppler Shift Analysis")) {
+                    show_doppler_dialog = true;
+                    doppler_pass_idx = selected_pass_idx;
+                }
             } else {
                 DrawUIText("No valid pass selected.", pl_x + 20*cfg.ui_scale, pl_y + 40*cfg.ui_scale, 16*cfg.ui_scale, cfg.text_main);
             }
         }
 
-        // render satellite info box near the icon
-        if (active_sat) {
-            Vector2 screenPos;
-            if (is_2d_view) {
-                float sat_mx, sat_my;
-                get_map_coordinates(active_sat->current_pos, gmst_deg, cfg.earth_rotation_offset, map_w, map_h, &sat_mx, &sat_my);
-                float cam_x = camera2d.target.x;
-                
-                while (sat_mx - cam_x > map_w/2.0f) sat_mx -= map_w;
-                while (sat_mx - cam_x < -map_w/2.0f) sat_mx += map_w;
-                
-                screenPos = GetWorldToScreen2D((Vector2){sat_mx, sat_my}, camera2d);
-            } else {
-                screenPos = GetWorldToScreen(Vector3Scale(active_sat->current_pos, 1.0f/DRAW_SCALE), camera3d);
+        if (show_doppler_dialog) {
+            if (IsKeyPressed(KEY_TAB)) {
+                if (edit_doppler_freq) { edit_doppler_freq = false; edit_doppler_res = true; }
+                else if (edit_doppler_res) { edit_doppler_res = false; edit_doppler_file = true; }
+                else if (edit_doppler_file) { edit_doppler_file = false; edit_doppler_freq = true; }
+                else { edit_doppler_freq = true; } 
             }
-            
-            float boxW = 280*cfg.ui_scale;
-            float boxH = 185*cfg.ui_scale;
-            float boxX = screenPos.x + (15*cfg.ui_scale);
-            float boxY = screenPos.y + (15*cfg.ui_scale);
-            
-            if (boxX + boxW > GetScreenWidth()) boxX = screenPos.x - boxW - (15*cfg.ui_scale);
-            if (boxY + boxH > GetScreenHeight()) boxY = screenPos.y - boxH - (15*cfg.ui_scale);
 
-            DrawRectangle(boxX - (5*cfg.ui_scale), boxY - (5*cfg.ui_scale), boxW, boxH, cfg.ui_bg);
-            
-            Color titleColor = (active_sat == hovered_sat) ? cfg.sat_highlighted : cfg.sat_selected;
-            DrawUIText(active_sat->name, boxX, boxY, 20*cfg.ui_scale, titleColor);
-            
-            double r_km = Vector3Length(active_sat->current_pos);
-            double v_kms = sqrt(MU * (2.0/r_km - 1.0/active_sat->semi_major_axis));
-            float lat_deg = asinf(active_sat->current_pos.y / r_km) * RAD2DEG;
-            float lon_deg = (atan2f(-active_sat->current_pos.z, active_sat->current_pos.x) - ((gmst_deg + cfg.earth_rotation_offset)*DEG2RAD)) * RAD2DEG;
-            
-            while (lon_deg > 180.0f) lon_deg -= 360.0f;
-            while (lon_deg < -180.0f) lon_deg += 360.0f;
-
-            char info[256];
-            sprintf(info, "Inc: %.2f deg\nRAAN: %.2f deg\nEcc: %.5f\nAlt: %.2f km\nSpd: %.2f km/s\nLat: %.2f deg\nLon: %.2f deg", 
-                    active_sat->inclination*RAD2DEG, active_sat->raan*RAD2DEG, active_sat->eccentricity, r_km-EARTH_RADIUS_KM, v_kms, lat_deg, lon_deg);
-            DrawUIText(info, boxX, boxY + (28*cfg.ui_scale), 18*cfg.ui_scale, cfg.text_main);
-
-            // draw textual altitude info at peri/apo points
-            Vector2 periScreen, apoScreen;
-            bool show_peri = true;
-            bool show_apo = true;
-
-            double t_peri_unix, t_apo_unix;
-            get_apsis_times(active_sat, current_epoch, &t_peri_unix, &t_apo_unix);
-
-            double real_rp = Vector3Length(calculate_position(active_sat, t_peri_unix));
-            double real_ra = Vector3Length(calculate_position(active_sat, t_apo_unix));
-            
-            if (is_2d_view) {
-                Vector2 p2, a2;
-                get_apsis_2d(active_sat, current_epoch, false, gmst_deg, cfg.earth_rotation_offset, map_w, map_h, &p2);
-                get_apsis_2d(active_sat, current_epoch, true, gmst_deg, cfg.earth_rotation_offset, map_w, map_h, &a2);
-                float cam_x = camera2d.target.x;
-                
-                while (p2.x - cam_x > map_w/2.0f) p2.x -= map_w; 
-                while (p2.x - cam_x < -map_w/2.0f) p2.x += map_w;
-                while (a2.x - cam_x > map_w/2.0f) a2.x -= map_w; 
-                while (a2.x - cam_x < -map_w/2.0f) a2.x += map_w;
-                
-                periScreen = GetWorldToScreen2D(p2, camera2d);
-                apoScreen = GetWorldToScreen2D(a2, camera2d);
-            } else {
-                Vector3 draw_p = Vector3Scale(calculate_position(active_sat, t_peri_unix), 1.0f/DRAW_SCALE);
-                Vector3 draw_a = Vector3Scale(calculate_position(active_sat, t_apo_unix), 1.0f/DRAW_SCALE);
-                
-                if (IsOccludedByEarth(camera3d.position, draw_p, draw_earth_radius)) show_peri = false;
-                if (IsOccludedByEarth(camera3d.position, draw_a, draw_earth_radius)) show_apo = false;
-                
-                periScreen = GetWorldToScreen(draw_p, camera3d);
-                apoScreen = GetWorldToScreen(draw_a, camera3d);
+            Rectangle titleBar = { dop_x, dop_y, dopplerWindow.width, 24 * cfg.ui_scale };
+            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), titleBar)) {
+                drag_doppler = true;
+                drag_doppler_off = Vector2Subtract(GetMousePosition(), (Vector2){dop_x, dop_y});
             }
-            
-            float text_size = 16.0f * cfg.ui_scale;
-            float x_offset = 20.0f * cfg.ui_scale;
-            float y_offset = text_size / 2.2f;
+            if (drag_doppler) {
+                dop_x = GetMousePosition().x - drag_doppler_off.x;
+                dop_y = GetMousePosition().y - drag_doppler_off.y;
+                if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) drag_doppler = false;
+            }
 
-            if (show_peri) DrawUIText(TextFormat("Peri: %.0f km", real_rp-EARTH_RADIUS_KM), periScreen.x + x_offset, periScreen.y - y_offset, text_size, cfg.periapsis);
-            if (show_apo) DrawUIText(TextFormat("Apo: %.0f km", real_ra-EARTH_RADIUS_KM), apoScreen.x + x_offset, apoScreen.y - y_offset, text_size, cfg.apoapsis);
+            if (GuiWindowBox(dopplerWindow, "Doppler Shift Analysis")) show_doppler_dialog = false;
+
+            if (doppler_pass_idx >= 0 && doppler_pass_idx < num_passes && selected_sat) {
+                SatPass* p = &passes[doppler_pass_idx];
+
+                GuiLabel((Rectangle){ dop_x + 20*cfg.ui_scale, dop_y + 40*cfg.ui_scale, 100*cfg.ui_scale, 28*cfg.ui_scale }, "Freq (Hz):");
+                if (GuiTextBox((Rectangle){ dop_x + 120*cfg.ui_scale, dop_y + 40*cfg.ui_scale, 120*cfg.ui_scale, 28*cfg.ui_scale }, text_doppler_freq, 32, edit_doppler_freq)) edit_doppler_freq = !edit_doppler_freq;
+
+                GuiLabel((Rectangle){ dop_x + 260*cfg.ui_scale, dop_y + 40*cfg.ui_scale, 90*cfg.ui_scale, 28*cfg.ui_scale }, "csv res:");
+                if (GuiTextBox((Rectangle){ dop_x + 350*cfg.ui_scale, dop_y + 40*cfg.ui_scale, 60*cfg.ui_scale, 28*cfg.ui_scale }, text_doppler_res, 32, edit_doppler_res)) edit_doppler_res = !edit_doppler_res;
+
+                GuiLabel((Rectangle){ dop_x + 20*cfg.ui_scale, dop_y + 80*cfg.ui_scale, 100*cfg.ui_scale, 28*cfg.ui_scale }, "Export:");
+                if (GuiTextBox((Rectangle){ dop_x + 120*cfg.ui_scale, dop_y + 80*cfg.ui_scale, 290*cfg.ui_scale, 28*cfg.ui_scale }, text_doppler_file, 128, edit_doppler_file)) edit_doppler_file = !edit_doppler_file;
+
+                if (GuiButton((Rectangle){ dop_x + 430*cfg.ui_scale, dop_y + 80*cfg.ui_scale, 120*cfg.ui_scale, 28*cfg.ui_scale }, "Export CSV")) {
+                    double base_freq = atof(text_doppler_freq);
+                    double res = atof(text_doppler_res);
+                    if (res <= 0.0) res = 1.0;
+                    double pass_dur = (p->los_epoch - p->aos_epoch) * 86400.0;
+                    
+                    FILE* fp = fopen(text_doppler_file, "w");
+                    if (fp) {
+                        fprintf(fp, "Time(s),Frequency(Hz)\n");
+                        int num_samples = (int)(pass_dur * res);
+                        for (int k = 0; k <= num_samples; k++) {
+                            double t_sec = k / res;
+                            double ep = p->aos_epoch + t_sec / 86400.0;
+                            double f = calculate_doppler_freq(selected_sat, ep, home_location, base_freq);
+                            fprintf(fp, "%.3f,%.3f\n", t_sec, f);
+                        }
+                        fclose(fp);
+                    }
+                }
+
+                double base_freq = atof(text_doppler_freq);
+                double pass_dur = (p->los_epoch - p->aos_epoch) * 86400.0;
+                
+                if (pass_dur > 0 && base_freq > 0) {
+                    float graph_x = dop_x + 90 * cfg.ui_scale;
+                    float graph_y = dop_y + 130 * cfg.ui_scale;
+                    float graph_w = dopplerWindow.width - 110 * cfg.ui_scale;
+                    float graph_h = dopplerWindow.height - 160 * cfg.ui_scale;
+                    
+                    DrawRectangleLines(graph_x, graph_y, graph_w, graph_h, cfg.ui_secondary);
+
+                    // sample the pass to find min/max bounds for scaling
+                    double min_f = base_freq * 2.0; 
+                    double max_f = 0.0;
+                    int plot_pts = (int)graph_w; 
+                    for (int k = 0; k <= plot_pts; k++) {
+                        double t = p->aos_epoch + (k / (double)plot_pts) * (pass_dur / 86400.0);
+                        double f = calculate_doppler_freq(selected_sat, t, home_location, base_freq);
+                        if (f < min_f) min_f = f;
+                        if (f > max_f) max_f = f;
+                    }
+
+                    // 10% inner padding
+                    double f_pad = (max_f - min_f) * 0.1;
+                    if (f_pad < 1.0) f_pad = 1.0; 
+                    min_f -= f_pad;
+                    max_f += f_pad;
+                    
+                    // draw axis text
+                    DrawUIText(TextFormat("%.0f Hz", max_f), dop_x + 30*cfg.ui_scale, graph_y, 14*cfg.ui_scale, cfg.text_main);
+                    DrawUIText(TextFormat("%.0f Hz", min_f), dop_x + 30*cfg.ui_scale, graph_y + graph_h - 14*cfg.ui_scale, 14*cfg.ui_scale, cfg.text_main);
+                    DrawUIText("0s", graph_x + 25*cfg.ui_scale, graph_y + graph_h + 5*cfg.ui_scale, 14*cfg.ui_scale, cfg.text_main);
+                    DrawUIText(TextFormat("%.0fs", pass_dur), graph_x + graph_w - 55*cfg.ui_scale, graph_y + graph_h + 5*cfg.ui_scale, 14*cfg.ui_scale, cfg.text_main);
+
+                    // scissor bounds to guarantee no graphical bleeding over the edges
+                    BeginScissorMode((int)graph_x, (int)graph_y, (int)graph_w, (int)graph_h);
+                    Vector2 prev_pt = {0};
+                    for (int k = 0; k <= plot_pts; k++) {
+                        double t = p->aos_epoch + (k / (double)plot_pts) * (pass_dur / 86400.0);
+                        double f = calculate_doppler_freq(selected_sat, t, home_location, base_freq);
+                        
+                        float px = graph_x + k;
+                        float py = graph_y + graph_h - (float)((f - min_f) / (max_f - min_f)) * graph_h;
+                        
+                        if (k > 0) DrawLineEx(prev_pt, (Vector2){px, py}, 2.0f, cfg.ui_accent);
+                        prev_pt = (Vector2){px, py};
+                    }
+                    EndScissorMode();
+                }
+            } else {
+                DrawUIText("No valid pass selected.", dop_x + 20*cfg.ui_scale, dop_y + 60*cfg.ui_scale, 16*cfg.ui_scale, cfg.text_main);
+            }
+        }
+
+        if (show_tle_warning) {
+            if (GuiWindowBox(tleWindow, "Warning")) show_tle_warning = false;
+
+            DrawUIText("Your TLEs are out of date.", tleWindow.x + 20*cfg.ui_scale, tleWindow.y + 45*cfg.ui_scale, 18*cfg.ui_scale, cfg.text_main);
+
+            if (GuiButton((Rectangle){tleWindow.x + 20*cfg.ui_scale, tleWindow.y + 80*cfg.ui_scale, 120*cfg.ui_scale, 30*cfg.ui_scale}, "Sync")) {
+                // Future functionality goes here
+            }
+            if (GuiButton((Rectangle){tleWindow.x + 160*cfg.ui_scale, tleWindow.y + 80*cfg.ui_scale, 120*cfg.ui_scale, 30*cfg.ui_scale}, "Ignore")) {
+                show_tle_warning = false;
+            }
         }
 
         // bottom right debug info

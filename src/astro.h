@@ -37,4 +37,8 @@ void epoch_to_time_str(double epoch, char* str);
 void update_orbit_cache(Satellite* sat, double current_epoch);
 void get_apsis_times(Satellite* sat, double current_epoch, double* out_peri_unix, double* out_apo_unix);
 
+// doppler math
+double get_sat_range(Satellite* sat, double epoch, Marker obs);
+double calculate_doppler_freq(Satellite* sat, double epoch, Marker obs, double base_freq);
+
 #endif // ASTRO_H
