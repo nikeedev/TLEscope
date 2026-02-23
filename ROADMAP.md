@@ -3,9 +3,9 @@
 ### Pass predictor
 - [x] viewing future passes on per-sat basis
 - [x] smooth timewarp until AOS button
-- [ ] viewing all nearest passes over a marker
+- [x] viewing all nearest passes over a marker
 - [x] button for doppler effect graphing of a given frequency with a csv export function of variable resolution
-
+- [ ] allow narrowing the area of interest; for example, only list passes that are in range and in the western side of the polar plot.
 ### TLE management
 - [ ] celestrak puller
 - [ ] spacetrack puller
