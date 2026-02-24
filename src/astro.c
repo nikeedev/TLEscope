@@ -112,52 +112,59 @@ void load_tle_data(const char* filename) {
     FILE* file = fopen(filename, "r");
     if (!file) { printf("Failed to open %s\n", filename); return; }
 
+    sat_count = 0;
+
     char line0[256], line1[256], line2[256];
-    while (fgets(line0, sizeof(line0), file) && fgets(line1, sizeof(line1), file) && fgets(line2, sizeof(line2), file)) {
-        if (sat_count >= MAX_SATELLITES) break;
-        Satellite* sat = &satellites[sat_count];
+    while (fgets(line0, sizeof(line0), file)) {
+        if (line0[0] == '#' || line0[0] == '\n' || line0[0] == '\r') continue;
 
-        strncpy(sat->name, line0, 24);
-        sat->name[24] = '\0';
-        for(int i = 23; i >= 0; i--) { if(sat->name[i] == ' ' || sat->name[i] == '\r' || sat->name[i] == '\n') sat->name[i] = '\0'; else break; }
+        if (fgets(line1, sizeof(line1), file) && fgets(line2, sizeof(line2), file)) {
+            if (sat_count >= MAX_SATELLITES) break;
+            Satellite* sat = &satellites[sat_count];
 
-        line0[strcspn(line0, "\r\n")] = 0;
-        line1[strcspn(line1, "\r\n")] = 0;
-        line2[strcspn(line2, "\r\n")] = 0;
+            strncpy(sat->name, line0, 24);
+            sat->name[24] = '\0';
+            for(int i = 23; i >= 0; i--) { if(sat->name[i] == ' ' || sat->name[i] == '\r' || sat->name[i] == '\n') sat->name[i] = '\0'; else break; }
 
-        char combined[768];
-        snprintf(combined, sizeof(combined), "%s\n%s\n%s\n", line0, line1, line2);
-        
-        struct TLEObject *parsed_objs = NULL;
-        int num_objs = 0;
-        ParseFileOrString(NULL, combined, &parsed_objs, &num_objs);
-        
-        if (num_objs > 0 && parsed_objs != NULL) {
-            double initial_r[3] = {0};
-            double initial_v[3] = {0};
+            line0[strcspn(line0, "\r\n")] = 0;
+            line1[strcspn(line1, "\r\n")] = 0;
+            line2[strcspn(line2, "\r\n")] = 0;
+
+            char combined[768];
+            snprintf(combined, sizeof(combined), "%s\n%s\n%s\n", line0, line1, line2);
             
-            ConvertTLEToSGP4(&sat->satrec, &parsed_objs[0], 0.0, initial_r, initial_v);
-            free(parsed_objs); 
-        } else {
-            printf("CSGP4 PARSER REJECTED: %s\n", sat->name);
+            struct TLEObject *parsed_objs = NULL;
+            int num_objs = 0;
+            ParseFileOrString(NULL, combined, &parsed_objs, &num_objs);
+            
+            if (num_objs > 0 && parsed_objs != NULL) {
+                double initial_r[3] = {0};
+                double initial_v[3] = {0};
+                
+                ConvertTLEToSGP4(&sat->satrec, &parsed_objs[0], 0.0, initial_r, initial_v);
+                free(parsed_objs); 
+            } else {
+                continue; // invalid parse gracefully skips
+            }
+
+            sat->epoch_days = parse_tle_double(line1, 18, 14);
+            sat->epoch_unix = get_unix_from_epoch(sat->epoch_days); // precalculated for perf
+            sat->inclination = parse_tle_double(line2, 8, 8) * DEG2RAD;
+            sat->raan = parse_tle_double(line2, 17, 8) * DEG2RAD;
+
+            char ecc_buf[32] = "0.";
+            strncpy(ecc_buf + 2, line2 + 26, 7);
+            sat->eccentricity = atof(ecc_buf);
+
+            sat->arg_perigee = parse_tle_double(line2, 34, 8) * DEG2RAD;
+            sat->mean_anomaly = parse_tle_double(line2, 43, 8) * DEG2RAD;
+            
+            double revs_per_day = parse_tle_double(line2, 52, 11);
+            sat->mean_motion = (revs_per_day * 2.0 * PI) / 86400.0;
+            sat->semi_major_axis = pow(MU / (sat->mean_motion * sat->mean_motion), 1.0 / 3.0);
+            sat->is_active = true;
+            sat_count++;
         }
-
-        sat->epoch_days = parse_tle_double(line1, 18, 14);
-        sat->epoch_unix = get_unix_from_epoch(sat->epoch_days); // precalculated for perf
-        sat->inclination = parse_tle_double(line2, 8, 8) * DEG2RAD;
-        sat->raan = parse_tle_double(line2, 17, 8) * DEG2RAD;
-
-        char ecc_buf[32] = "0.";
-        strncpy(ecc_buf + 2, line2 + 26, 7);
-        sat->eccentricity = atof(ecc_buf);
-
-        sat->arg_perigee = parse_tle_double(line2, 34, 8) * DEG2RAD;
-        sat->mean_anomaly = parse_tle_double(line2, 43, 8) * DEG2RAD;
-        
-        double revs_per_day = parse_tle_double(line2, 52, 11);
-        sat->mean_motion = (revs_per_day * 2.0 * PI) / 86400.0;
-        sat->semi_major_axis = pow(MU / (sat->mean_motion * sat->mean_motion), 1.0 / 3.0);
-        sat_count++;
     }
     fclose(file);
 }
@@ -181,6 +188,7 @@ Vector3 calculate_position(Satellite* sat, double current_unix) {
 
 void get_map_coordinates(Vector3 pos, double gmst_deg, float earth_offset, float map_w, float map_h, float* out_x, float* out_y) {
     float r = Vector3Length(pos);
+    if (r == 0) r = 0.0001f;
     float phi = acosf(pos.y / r); 
     float v = phi / PI; 
 
@@ -285,97 +293,118 @@ void get_az_el(Vector3 eci_pos, double gmst_deg, float obs_lat, float obs_lon, f
     if (*az < 0) *az += 360.0;
 }
 
+int compare_passes(const void* a, const void* b) {
+    const SatPass* p1 = (const SatPass*)a;
+    const SatPass* p2 = (const SatPass*)b;
+    if (p1->aos_epoch < p2->aos_epoch) return -1;
+    if (p1->aos_epoch > p2->aos_epoch) return 1;
+    return 0;
+}
+
 void CalculatePasses(Satellite* sat, double start_epoch) {
     num_passes = 0;
     last_pass_calc_sat = sat;
-    if (!sat) return;
 
-    double t = start_epoch;
-    double t_unix = get_unix_from_epoch(t);
-    double gmst = epoch_to_gmst(t);
-    double az, el;
-    
-    get_az_el(calculate_position(sat, t_unix), gmst, home_location.lat, home_location.lon, home_location.alt, &az, &el);
-    
-    // back up if happens to already be in a pass to catch the true start
-    if (el > 0) {
-        for (int i = 0; i < 30 && el > 0; i++) {
-            t -= (1.0 / 1440.0);
+    int target_count = sat ? 1 : sat_count;
+    int max_days = sat ? 3 : 1; 
+    double coarse_step = sat ? (1.0 / 1440.0) : (4.0 / 1440.0);
+
+    for (int s = 0; s < target_count; s++) {
+        Satellite* current_sat = sat ? sat : &satellites[s];
+        if (!current_sat || !current_sat->is_active) continue;
+
+        double t = start_epoch;
+        double t_unix = get_unix_from_epoch(t);
+        double gmst = epoch_to_gmst(t);
+        double az, el;
+
+        get_az_el(calculate_position(current_sat, t_unix), gmst, home_location.lat, home_location.lon, home_location.alt, &az, &el);
+
+        // back up if happens to already be in a pass to catch the true start
+        if (el > 0) {
+            for (int i = 0; i < 30 && el > 0; i++) {
+                t -= (1.0 / 1440.0);
+                t_unix = get_unix_from_epoch(t);
+                gmst = epoch_to_gmst(t);
+                get_az_el(calculate_position(current_sat, t_unix), gmst, home_location.lat, home_location.lon, home_location.alt, &az, &el);
+            }
+        }
+
+        bool in_pass = false;
+        SatPass current_pass = {0};
+        current_pass.sat = current_sat;
+
+        int steps = (max_days * 1440) / (coarse_step * 1440.0);
+        for (int i = 0; i < steps && num_passes < MAX_PASSES; i++) {
             t_unix = get_unix_from_epoch(t);
             gmst = epoch_to_gmst(t);
-            get_az_el(calculate_position(sat, t_unix), gmst, home_location.lat, home_location.lon, home_location.alt, &az, &el);
-        }
-    }
+            get_az_el(calculate_position(current_sat, t_unix), gmst, home_location.lat, home_location.lon, home_location.alt, &az, &el);
 
-    bool in_pass = false;
-    SatPass current_pass = {0};
-    
-    for (int i = 0; i < 3 * 1440 && num_passes < MAX_PASSES; i++) {
-        t_unix = get_unix_from_epoch(t);
-        gmst = epoch_to_gmst(t);
-        get_az_el(calculate_position(sat, t_unix), gmst, home_location.lat, home_location.lon, home_location.alt, &az, &el);
-        
-        if (el >= 0.0) {
-            if (!in_pass) {
-                in_pass = true;
-                
-                // binary search to find exact AOS
-                double t_low = t - (1.0/1440.0);
-                double t_high = t;
-                for(int b = 0; b < 10; b++) {
-                    double t_mid = (t_low + t_high) / 2.0;
-                    double mid_unix = get_unix_from_epoch(t_mid);
-                    double mid_gmst = epoch_to_gmst(t_mid);
-                    double mid_az, mid_el;
-                    get_az_el(calculate_position(sat, mid_unix), mid_gmst, home_location.lat, home_location.lon, home_location.alt, &mid_az, &mid_el);
-                    if (mid_el >= 0.0) t_high = t_mid;
-                    else t_low = t_mid;
-                }
-                
-                current_pass.aos_epoch = t_high;
-                current_pass.max_el = el;
-                current_pass.max_el_epoch = t;
-            }
-            if (el > current_pass.max_el) {
-                current_pass.max_el = el;
-                current_pass.max_el_epoch = t;
-            }
-        } else {
-            if (in_pass) {
-                in_pass = false;
-                
-                // binary search to find exact LOS crossing because otherwise fuckywucky happens sometimes
-                double t_low = t - (1.0/1440.0);
-                double t_high = t;
-                for(int b = 0; b < 10; b++) {
-                    double t_mid = (t_low + t_high) / 2.0;
-                    double mid_unix = get_unix_from_epoch(t_mid);
-                    double mid_gmst = epoch_to_gmst(t_mid);
-                    double mid_az, mid_el;
-                    get_az_el(calculate_position(sat, mid_unix), mid_gmst, home_location.lat, home_location.lon, home_location.alt, &mid_az, &mid_el);
-                    if (mid_el < 0.0) t_high = t_mid;
-                    else t_low = t_mid;
-                }
-                
-                current_pass.los_epoch = t_low;
-                
-                current_pass.num_pts = 0;
-                double step = (current_pass.los_epoch - current_pass.aos_epoch) / 99.0;
-                if (step > 0) {
-                    for (int k = 0; k < 100; k++) {
-                        double pt = current_pass.aos_epoch + k * step;
-                        double pt_unix = get_unix_from_epoch(pt);
-                        double p_gmst = epoch_to_gmst(pt);
-                        double p_az, p_el;
-                        get_az_el(calculate_position(sat, pt_unix), p_gmst, home_location.lat, home_location.lon, home_location.alt, &p_az, &p_el);
-                        current_pass.path_pts[current_pass.num_pts++] = (Vector2){(float)p_az, (float)p_el};
+            if (el >= 0.0) {
+                if (!in_pass) {
+                    in_pass = true;
+                    // binary search to find exact AOS
+                    double t_low = t - coarse_step;
+                    double t_high = t;
+                    for(int b = 0; b < 10; b++) {
+                        double t_mid = (t_low + t_high) / 2.0;
+                        double mid_unix = get_unix_from_epoch(t_mid);
+                        double mid_gmst = epoch_to_gmst(t_mid);
+                        double mid_az, mid_el;
+                        get_az_el(calculate_position(current_sat, mid_unix), mid_gmst, home_location.lat, home_location.lon, home_location.alt, &mid_az, &mid_el);
+                        if (mid_el >= 0.0) t_high = t_mid;
+                        else t_low = t_mid;
                     }
+
+                    current_pass.aos_epoch = t_high;
+                    current_pass.max_el = el;
+                    current_pass.max_el_epoch = t;
                 }
-                passes[num_passes++] = current_pass;
+                if (el > current_pass.max_el) {
+                    current_pass.max_el = el;
+                    current_pass.max_el_epoch = t;
+                }
+            } else {
+                if (in_pass) {
+                    in_pass = false;
+                    // binary search to find exact LOS crossing 
+                    double t_low = t - coarse_step;
+                    double t_high = t;
+                    for(int b = 0; b < 10; b++) {
+                        double t_mid = (t_low + t_high) / 2.0;
+                        double mid_unix = get_unix_from_epoch(t_mid);
+                        double mid_gmst = epoch_to_gmst(t_mid);
+                        double mid_az, mid_el;
+                        get_az_el(calculate_position(current_sat, mid_unix), mid_gmst, home_location.lat, home_location.lon, home_location.alt, &mid_az, &mid_el);
+                        if (mid_el < 0.0) t_high = t_mid;
+                        else t_low = t_mid;
+                    }
+
+                    current_pass.los_epoch = t_low;
+
+                    current_pass.num_pts = 0;
+                    double step = (current_pass.los_epoch - current_pass.aos_epoch) / 99.0;
+                    if (step > 0) {
+                        for (int k = 0; k < 100; k++) {
+                            double pt = current_pass.aos_epoch + k * step;
+                            double pt_unix = get_unix_from_epoch(pt);
+                            double p_gmst = epoch_to_gmst(pt);
+                            double p_az, p_el;
+                            get_az_el(calculate_position(current_sat, pt_unix), p_gmst, home_location.lat, home_location.lon, home_location.alt, &p_az, &p_el);
+                            current_pass.path_pts[current_pass.num_pts++] = (Vector2){(float)p_az, (float)p_el};
+                        }
+                    }
+                    passes[num_passes++] = current_pass;
+                    current_pass = (SatPass){0};
+                    current_pass.sat = current_sat;
+                }
             }
+            t += coarse_step;
         }
-        t += (1.0 / 1440.0);
     }
+    
+    // Sort overall passes generated by timeframe chronological arrival order
+    qsort(passes, num_passes, sizeof(SatPass), compare_passes);
 }
 
 void epoch_to_time_str(double epoch, char* str) {
@@ -451,29 +480,29 @@ Vector3 calculate_moon_position(double current_time_days) {
 
 double get_sat_range(Satellite* sat, double epoch, Marker obs) {
     double t_unix = get_unix_from_epoch(epoch);
-    double gmst = epoch_to_gmst(epoch);
+    double theta = epoch_to_gmst(epoch) * DEG2RAD; 
     
-    Vector3 eci_pos = calculate_position(sat, t_unix);
-    double sat_r = Vector3Length(eci_pos);
-    if (sat_r == 0) return 0.0;
+    Vector3 eci = calculate_position(sat, t_unix);
     
-    double sat_lat = asin(eci_pos.y / sat_r);
-    double sat_lon_eci = atan2(-eci_pos.z, eci_pos.x);
-    double theta = gmst * DEG2RAD; 
-    double sat_lon_ecef = sat_lon_eci - theta;
+    // direct cartesian rotation (ECI to ECEF)
+    double cos_t = cos(theta);
+    double sin_t = sin(theta);
+    
+    double s_x =  eci.x * cos_t - eci.z * sin_t;
+    double s_y = -eci.x * sin_t - eci.z * cos_t;
+    double s_z =  eci.y;
 
-    double s_x = sat_r * cos(sat_lat) * cos(sat_lon_ecef);
-    double s_y = sat_r * cos(sat_lat) * sin(sat_lon_ecef);
-    double s_z = sat_r * sin(sat_lat);
-
+    // observer ECEF calc
     double lat_rad = obs.lat * DEG2RAD;
     double lon_rad = obs.lon * DEG2RAD;
-    double obs_rad = EARTH_RADIUS_KM + obs.alt/1000.0;
+    double obs_rad = EARTH_RADIUS_KM + obs.alt / 1000.0;
 
-    double o_x = obs_rad * cos(lat_rad) * cos(lon_rad);
-    double o_y = obs_rad * cos(lat_rad) * sin(lon_rad);
+    double cos_lat = cos(lat_rad);
+    double o_x = obs_rad * cos_lat * cos(lon_rad);
+    double o_y = obs_rad * cos_lat * sin(lon_rad);
     double o_z = obs_rad * sin(lat_rad);
 
+    // dist
     double dx = s_x - o_x;
     double dy = s_y - o_y;
     double dz = s_z - o_z;

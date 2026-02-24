@@ -4,17 +4,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
-#include <time.h> 
-#include <string.h>
-
-#define RAYGUI_IMPLEMENTATION
-#include "raygui.h"
 
 #include "types.h"
 #include "config.h"
 #include "astro.h"
+#include "ui.h"
 
-// fragment shader for the 3D globe day/night transition
+/* * shaders for day/night transition 
+ * uses dot product between surface normal and sun direction
+ */
 const char* fs3D = 
     "#version 330\n"
     "in vec2 fragTexCoord;\n"
@@ -34,7 +32,6 @@ const char* fs3D =
     "    finalColor = mix(night, day, blend) * fragColor;\n"
     "}\n";
 
-// same logic but for the 2D map view
 const char* fs2D = 
     "#version 330\n"
     "in vec2 fragTexCoord;\n"
@@ -54,7 +51,7 @@ const char* fs2D =
     "    finalColor = mix(night, day, blend) * fragColor;\n"
     "}\n";
 
-// shader to handle cloud transparency based on light intensity
+/* cloud shader handles transparency based on sun position */
 const char* fsCloud3D = 
     "#version 330\n"
     "in vec2 fragTexCoord;\n"
@@ -72,10 +69,11 @@ const char* fsCloud3D =
     "    finalColor = vec4(texel.rgb, texel.a * alpha) * fragColor;\n"
     "}\n";
 
-// default configuration settings
+/* application state and resources */
 static AppConfig cfg = {
     .window_width = 1280, .window_height = 720, .target_fps = 120, .ui_scale = 1.0f,
-    .show_clouds = false, .show_night_lights = true,
+    .show_clouds = false, .show_night_lights = true, .show_markers = true,
+    .show_statistics = false,
     .bg_color = {0, 0, 0, 255}, .text_main = {255, 255, 255, 255}, .theme = "default",
     .ui_primary = {32, 32, 32, 255}, .ui_secondary = {64, 64, 64, 255}, .ui_accent = {0, 255, 0, 255}
 };
@@ -85,28 +83,7 @@ static Texture2D satIcon, markerIcon, earthTexture, moonTexture, cloudTexture, e
 static Texture2D periMark, apoMark;
 static Model earthModel, moonModel, cloudModel;
 
-// helper to adjust color transparency
-static Color ApplyAlpha(Color c, float alpha) {
-    if (alpha < 0.0f) alpha = 0.0f;
-    if (alpha > 1.0f) alpha = 1.0f;
-    c.a = (unsigned char)(c.a * alpha);
-    return c;
-}
-
-// checks if a point is hidden behind the earth from the camera's perspective
-static bool IsOccludedByEarth(Vector3 camPos, Vector3 targetPos, float earthRadius) {
-    Vector3 v = Vector3Subtract(targetPos, camPos);
-    float L = Vector3Length(v);
-    Vector3 d = Vector3Scale(v, 1.0f / L);
-    float t = -Vector3DotProduct(camPos, d);
-    if (t > 0.0f && t < L) {
-        Vector3 closest = Vector3Add(camPos, Vector3Scale(d, t));
-        if (Vector3Length(closest) < earthRadius * 0.99f) return true; 
-    }
-    return false;
-}
-
-// generates a UV-mapped sphere for planets and clouds
+/* manual mesh generation for the planetary spheres */
 static Mesh GenEarthMesh(float radius, int slices, int rings) {
     Mesh mesh = { 0 };
     int vertexCount = (rings + 1) * (slices + 1);
@@ -159,7 +136,7 @@ static Mesh GenEarthMesh(float radius, int slices, int rings) {
     return mesh;
 }
 
-// renders the orbital path line in 3D space
+/* render orbit lines in 3d space */
 static void draw_orbit_3d(Satellite* sat, double current_epoch, bool is_highlighted, float alpha) {
     Color orbitColor = ApplyAlpha(is_highlighted ? cfg.orbit_highlighted : cfg.orbit_normal, alpha);
 
@@ -190,39 +167,7 @@ static void draw_orbit_3d(Satellite* sat, double current_epoch, bool is_highligh
     }
 }
 
-static void DrawUIText(const char* text, float x, float y, float size, Color color) {
-    DrawTextEx(customFont, text, (Vector2){x, y}, size, 1.0f, color);
-}
-
-// handles speed stepping for time simulation
-static double StepTimeMultiplier(double current, bool increase) {
-    if (increase) {
-        if (current == 0.0) return 0.25;
-        if (current >= 0.25) return current * 2.0;
-        if (current <= -0.25) {
-            if (current == -0.25) return 0.0;
-            return current / 2.0;
-        }
-    } else {
-        if (current == 0.0) return -0.25;
-        if (current <= -0.25) return current * 2.0;
-        if (current >= 0.25) {
-            if (current == 0.25) return 0.0;
-            return current / 2.0;
-        }
-    }
-    return current;
-}
-
-static double unix_to_epoch(double target_unix) {
-    double e0 = get_current_real_time_epoch();
-    double u0 = get_unix_from_epoch(e0);
-    return e0 + (target_unix - u0) / 86400.0;
-}
-
-typedef enum { LOCK_NONE, LOCK_EARTH, LOCK_MOON } TargetLock;
-
-// simple loading bar for startup
+/* simple progress bar during init */
 static void DrawLoadingScreen(float progress, const char* message, Texture2D logoTex) {
     BeginDrawing();
     ClearBackground(cfg.bg_color);
@@ -251,16 +196,15 @@ static void DrawLoadingScreen(float progress, const char* message, Texture2D log
     if (progress > 0.0f) DrawRectangleRounded(barProgress, 0.5f, 16, cfg.text_secondary);
     
     Vector2 msgSize = MeasureTextEx(customFont, message, 18 * cfg.ui_scale, 1.0f);
-    DrawUIText(message, (screenW - msgSize.x)/2, barOutline.y + barH + 20 * cfg.ui_scale, 18 * cfg.ui_scale, cfg.text_main);
+    DrawUIText(customFont, message, (screenW - msgSize.x)/2, barOutline.y + barH + 20 * cfg.ui_scale, 18 * cfg.ui_scale, cfg.text_main);
     
     EndDrawing();
 }
 
-bool show_ui = true;
-
 int main(void) {
     LoadAppConfig("settings.json", &cfg);
 
+    /* window setup and msaa */
     SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE);
     InitWindow(cfg.window_width, cfg.window_height, "TLEscope");
 
@@ -271,7 +215,6 @@ int main(void) {
     if (cfg.window_width >= max_w || cfg.window_height >= max_h) {
         SetWindowState(FLAG_WINDOW_MAXIMIZED);
     } else {
-        // Center the window dynamically based on the current monitor's offset
         Vector2 monitorPos = GetMonitorPosition(monitor);
         SetWindowPosition(
             (int)monitorPos.x + (max_w - cfg.window_width) / 2,
@@ -279,9 +222,9 @@ int main(void) {
         );
     }
 
-    SetExitKey(0); // disable default exit key (ESC)
+    SetExitKey(0); 
 
-    // load app icons and textures
+    /* logo and icon loading */
     Image logoImg = LoadImage("logo.png");
     Texture2D logoTex = {0};
     if (logoImg.data != NULL) {
@@ -296,15 +239,14 @@ int main(void) {
         UnloadImage(logoLImg);
     }
     
-    // font and gui setup
+    /* font loading with specific glyph range */
     int glyphsCount = 0;
     int *glyphs = LoadCodepoints(" !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~", &glyphsCount);
     customFont = LoadFontEx(TextFormat("themes/%s/font.ttf", cfg.theme), 64, glyphs, glyphsCount);
     GenTextureMipmaps(&customFont.texture);
     SetTextureFilter(customFont.texture, TEXTURE_FILTER_BILINEAR);
-    GuiSetFont(customFont);
 
-    // data and asset loading sequence
+    /* resource loading phase */
     DrawLoadingScreen(0.1f, "Fetching TLE Data...", logoLTex);
     load_tle_data("data.tle");
 
@@ -359,20 +301,20 @@ int main(void) {
 
     DrawLoadingScreen(1.0f, "Ready!", logoTex);
 
-    // camera and view state initialization
-    Camera camera3d = { 0 };
-    camera3d.target = (Vector3){ 0.0f, 0.0f, 0.0f };
-    camera3d.up = (Vector3){ 0.0f, 1.0f, 0.0f };
-    camera3d.fovy = 45.0f;
-    camera3d.projection = CAMERA_PERSPECTIVE;
+    /* camera defaults */
+    Camera Camera3DParams = { 0 };
+    Camera3DParams.target = (Vector3){ 0.0f, 0.0f, 0.0f };
+    Camera3DParams.up = (Vector3){ 0.0f, 1.0f, 0.0f };
+    Camera3DParams.fovy = 45.0f;
+    Camera3DParams.projection = CAMERA_PERSPECTIVE;
 
-    Camera2D camera2d = { 0 };
-    camera2d.zoom = 1.0f;
-    camera2d.offset = (Vector2){ cfg.window_width / 2.0f, cfg.window_height / 2.0f };
-    camera2d.target = (Vector2){ 0.0f, 0.0f };
+    Camera2D Camera2DParams = { 0 };
+    Camera2DParams.zoom = 1.0f;
+    Camera2DParams.offset = (Vector2){ GetScreenWidth() / 2.0f, GetScreenHeight() / 2.0f };
+    Camera2DParams.target = (Vector2){ 0.0f, 0.0f };
 
-    float target_camera2d_zoom = camera2d.zoom;
-    Vector2 target_camera2d_target = camera2d.target;
+    float target_camera2d_zoom = Camera2DParams.zoom;
+    Vector2 target_camera2d_target = Camera2DParams.target;
 
     float map_w = 2048.0f, map_h = 1024.0f;
     float camDistance = 35.0f, camAngleX = 0.785f, camAngleY = 0.5f;
@@ -380,7 +322,7 @@ int main(void) {
     float target_camDistance = camDistance;
     float target_camAngleX = camAngleX;
     float target_camAngleY = camAngleY;
-    Vector3 target_camera3d_target = camera3d.target;
+    Vector3 target_camera3d_target = Camera3DParams.target;
 
     double current_epoch = get_current_real_time_epoch();
     double time_multiplier = 1.0; 
@@ -402,54 +344,16 @@ int main(void) {
     SetTargetFPS(cfg.target_fps);
     int current_update_idx = 0;
 
-    // UI window state and positioning
-    bool show_help = false;
-    bool show_settings = false;
-    bool show_passes_dialog = false;
-    bool show_polar_dialog = false;
-    bool show_tle_warning = false;
-    int selected_pass_idx = -1;
-    
-    float hw_x = 100.0f, hw_y = 250.0f;
-    float sw_x = 100.0f, sw_y = 250.0f;
-    float pd_x = 1000.0f, pd_y = 200.0f;
-    float pl_x = 550.0f, pl_y = 150.0f;
-
-    bool drag_help = false, drag_settings = false, drag_passes = false, drag_polar = false;
-    Vector2 drag_help_off = {0}, drag_settings_off = {0}, drag_passes_off = {0}, drag_polar_off = {0};
-
-    bool show_time_dialog = false;
-    bool drag_time_dialog = false;
-    Vector2 drag_time_off = {0};
-    float td_x = 300.0f, td_y = 100.0f;
-
-    // Doppler UI state variables
-    bool show_doppler_dialog = false;
-    int doppler_pass_idx = -1;
-    char text_doppler_freq[32] = "137625000"; 
-    char text_doppler_res[32] = "1"; 
-    char text_doppler_file[128] = "doppler_export.csv";
-    bool edit_doppler_freq = false;
-    bool edit_doppler_res = false;
-    bool edit_doppler_file = false;
-    bool drag_doppler = false;
-    Vector2 drag_doppler_off = {0};
-    float dop_x = 200.0f, dop_y = 150.0f;
-    
-    char text_year[8] = "2026", text_month[4] = "1", text_day[4] = "1";
-    char text_hour[4] = "12", text_min[4] = "0", text_sec[4] = "0";
-    char text_unix[64] = "0";
-    bool edit_year = false, edit_month = false, edit_day = false;
-    bool edit_hour = false, edit_min = false, edit_sec = false;
-    bool edit_unix = false;
-
+    /* main loop */
     while (!WindowShouldClose()) {
+        bool is_typing = IsUITyping();
+        bool over_ui = IsMouseOverUI(&cfg);
 
-        bool is_typing = edit_year || edit_month || edit_day || 
-                         edit_hour || edit_min || edit_sec || edit_unix ||
-                         edit_doppler_freq || edit_doppler_res || edit_doppler_file;
+        if (is_2d_view && !is_typing) {
+            Camera2DParams.offset = (Vector2){ GetScreenWidth() / 2.0f, GetScreenHeight() / 2.0f };
+        }
 
-        // handle keyboard shortcuts
+        /* input handling */
         if (!is_typing) {
             if (IsKeyPressed(KEY_SPACE)) {
                 is_auto_warping = false;
@@ -463,7 +367,7 @@ int main(void) {
             if (IsKeyPressed(KEY_PERIOD)) { is_auto_warping = false; time_multiplier = StepTimeMultiplier(time_multiplier, true); }
             if (IsKeyPressed(KEY_COMMA)) { is_auto_warping = false; time_multiplier = StepTimeMultiplier(time_multiplier, false); }
             if (IsKeyPressed(KEY_M)) is_2d_view = !is_2d_view;
-            if (IsKeyPressed(KEY_RIGHT_BRACKET)) show_tle_warning = !show_tle_warning;
+            if (IsKeyPressed(KEY_RIGHT_BRACKET)) ToggleTLEWarning();
             
             if (IsKeyPressed(KEY_SLASH)) {
                 is_auto_warping = false;
@@ -481,7 +385,7 @@ int main(void) {
         if (cfg.ui_scale < 0.5f) cfg.ui_scale = 0.5f;
         if (cfg.ui_scale > 4.0f) cfg.ui_scale = 4.0f;
 
-        // smooth auto-warp integration @juliasatt you're a genius
+        /* time warp logic for jumping to specific dates */
         if (is_auto_warping) {
             double diff_sec = (auto_warp_target - current_epoch) * 86400.0;
             if (diff_sec <= 0.0) {
@@ -504,26 +408,30 @@ int main(void) {
             }
         }
 
-        // update simulation time and satellite positions
         current_epoch += (GetFrameTime() * time_multiplier) / 86400.0; 
         current_epoch = normalize_epoch(current_epoch);
 
+        /* asynchronous orbit path updates to keep fps high */
         if (sat_count > 0) {
             int updates_per_frame = 50; 
             for (int i = 0; i < updates_per_frame; i++) {
-                update_orbit_cache(&satellites[current_update_idx], current_epoch);
+                if (satellites[current_update_idx].is_active) {
+                    update_orbit_cache(&satellites[current_update_idx], current_epoch);
+                }
                 current_update_idx = (current_update_idx + 1) % sat_count;
             }
         }
 
         double current_unix = get_unix_from_epoch(current_epoch);
 
+        /* update current positions of all active sats */
         for (int i = 0; i < sat_count; i++) {
+            if (!satellites[i].is_active) continue;
             if (hide_unselected && selected_sat != NULL && &satellites[i] != selected_sat) continue;
             satellites[i].current_pos = calculate_position(&satellites[i], current_unix);
         }
 
-        // handle fading of unselected orbits
+        /* fading logic for selection isolation */
         bool should_hide = (hide_unselected && selected_sat != NULL);
         if (should_hide) {
             unselected_fade -= 3.0f * GetFrameTime();
@@ -537,7 +445,7 @@ int main(void) {
         epoch_to_datetime_str(current_epoch, datetime_str);
         double gmst_deg = epoch_to_gmst(current_epoch);
 
-        // calculate moon position and rotation
+        /* calculate moon orientation and position */
         Vector3 moon_pos_km = calculate_moon_position(current_epoch);
         Vector3 draw_moon_pos = Vector3Scale(moon_pos_km, 1.0f / DRAW_SCALE);
         float moon_mx, moon_my;
@@ -551,144 +459,104 @@ int main(void) {
         Vector2 mouseDelta = GetMouseDelta();
         hovered_sat = NULL;
 
-        // handle 2D camera controls and selection
+        /* handle picking and camera in 2d mode */
         if (is_2d_view) {
-            if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT) || (IsMouseButtonDown(MOUSE_BUTTON_MIDDLE) && IsKeyDown(KEY_LEFT_SHIFT))) {
-                target_camera2d_target = Vector2Add(target_camera2d_target, Vector2Scale(mouseDelta, -1.0f / target_camera2d_zoom));
-                active_lock = LOCK_NONE;
-            }
-            float wheel = GetMouseWheelMove();
-            if (wheel != 0 && !is_typing) {
-                Vector2 mouseWorldPos = GetScreenToWorld2D(GetMousePosition(), camera2d);
-                camera2d.offset = GetMousePosition();
-                camera2d.target = mouseWorldPos;
-                target_camera2d_target = mouseWorldPos; 
-                target_camera2d_zoom += wheel * 0.1f * target_camera2d_zoom;
-                if (target_camera2d_zoom < 0.1f) target_camera2d_zoom = 0.1f;
-                active_lock = LOCK_NONE;
-            }
-
-            Vector2 mousePos = GetMousePosition();
-            float closest_dist = 9999.0f;
-            float hit_radius_pixels = 12.0f * cfg.ui_scale;
-
-            for (int i = 0; i < sat_count; i++) {
-                if (hide_unselected && selected_sat != NULL && &satellites[i] != selected_sat) continue;
-                
-                float mx, my;
-                get_map_coordinates(satellites[i].current_pos, gmst_deg, cfg.earth_rotation_offset, map_w, map_h, &mx, &my);
-                
-                Vector2 screenPos = GetWorldToScreen2D((Vector2){mx, my}, camera2d);
-                float dist = Vector2Distance(mousePos, screenPos);
-                
-                if (dist < hit_radius_pixels && dist < closest_dist) { closest_dist = dist; hovered_sat = &satellites[i]; }
-            }
-        } else {
-            // handle 3D camera controls and selection
-            if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
-                if (IsKeyDown(KEY_LEFT_SHIFT)) {
-                    Vector3 forward = Vector3Normalize(Vector3Subtract(camera3d.target, camera3d.position));
-                    Vector3 right = Vector3Normalize(Vector3CrossProduct(forward, camera3d.up));
-                    Vector3 upVector = Vector3Normalize(Vector3CrossProduct(right, forward));
-                    float panSpeed = target_camDistance * 0.001f; 
-                    target_camera3d_target = Vector3Add(target_camera3d_target, Vector3Scale(right, -mouseDelta.x * panSpeed));
-                    target_camera3d_target = Vector3Add(target_camera3d_target, Vector3Scale(upVector, mouseDelta.y * panSpeed));
+            if (!over_ui) {
+                if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT) || (IsMouseButtonDown(MOUSE_BUTTON_MIDDLE) && IsKeyDown(KEY_LEFT_SHIFT))) {
+                    target_camera2d_target = Vector2Add(target_camera2d_target, Vector2Scale(mouseDelta, -1.0f / target_camera2d_zoom));
                     active_lock = LOCK_NONE;
-                } else {
-                    target_camAngleX -= mouseDelta.x * 0.005f;
-                    target_camAngleY += mouseDelta.y * 0.005f;
-                    if (target_camAngleY > 1.5f) target_camAngleY = 1.5f;
-                    if (target_camAngleY < -1.5f) target_camAngleY = -1.5f;
+                }
+                float wheel = GetMouseWheelMove();
+                if (wheel != 0 && !is_typing) {
+                    target_camera2d_zoom += wheel * 0.1f * target_camera2d_zoom;
+                    if (target_camera2d_zoom < 0.1f) target_camera2d_zoom = 0.1f;
+                    active_lock = LOCK_NONE;
                 }
             }
-            if (!is_typing) {
-                target_camDistance -= GetMouseWheelMove() * (target_camDistance * 0.1f);
-                if (target_camDistance < draw_earth_radius + 1.0f) target_camDistance = draw_earth_radius + 1.0f;
+
+            if (!over_ui) {
+                Vector2 mousePos = GetMousePosition();
+                float closest_dist = 9999.0f;
+                float hit_radius_pixels = 12.0f * cfg.ui_scale;
+
+                for (int i = 0; i < sat_count; i++) {
+                    if (!satellites[i].is_active) continue;
+                    if (hide_unselected && selected_sat != NULL && &satellites[i] != selected_sat) continue;
+                    
+                    float mx, my;
+                    get_map_coordinates(satellites[i].current_pos, gmst_deg, cfg.earth_rotation_offset, map_w, map_h, &mx, &my);
+                    
+                    Vector2 screenPos = GetWorldToScreen2D((Vector2){mx, my}, Camera2DParams);
+                    float dist = Vector2Distance(mousePos, screenPos);
+                    
+                    if (dist < hit_radius_pixels && dist < closest_dist) { closest_dist = dist; hovered_sat = &satellites[i]; }
+                }
+            }
+        } else {
+            /* handle picking and camera in 3d mode */
+            if (!over_ui) {
+                if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
+                    if (IsKeyDown(KEY_LEFT_SHIFT)) {
+                        Vector3 forward = Vector3Normalize(Vector3Subtract(Camera3DParams.target, Camera3DParams.position));
+                        Vector3 right = Vector3Normalize(Vector3CrossProduct(forward, Camera3DParams.up));
+                        Vector3 upVector = Vector3Normalize(Vector3CrossProduct(right, forward));
+                        float panSpeed = target_camDistance * 0.001f; 
+                        target_camera3d_target = Vector3Add(target_camera3d_target, Vector3Scale(right, -mouseDelta.x * panSpeed));
+                        target_camera3d_target = Vector3Add(target_camera3d_target, Vector3Scale(upVector, mouseDelta.y * panSpeed));
+                        active_lock = LOCK_NONE;
+                    } else {
+                        target_camAngleX -= mouseDelta.x * 0.005f;
+                        target_camAngleY += mouseDelta.y * 0.005f;
+                        if (target_camAngleY > 1.5f) target_camAngleY = 1.5f;
+                        if (target_camAngleY < -1.5f) target_camAngleY = -1.5f;
+                    }
+                }
+                if (!is_typing) {
+                    target_camDistance -= GetMouseWheelMove() * (target_camDistance * 0.1f);
+                    if (target_camDistance < draw_earth_radius + 1.0f) target_camDistance = draw_earth_radius + 1.0f;
+                }
             }
 
-            Ray mouseRay = GetMouseRay(GetMousePosition(), camera3d);
-            float closest_dist = 9999.0f;
+            if (!over_ui) {
+                Ray mouseRay = GetMouseRay(GetMousePosition(), Camera3DParams);
+                float closest_dist = 9999.0f;
 
-            for (int i = 0; i < sat_count; i++) {
-                if (hide_unselected && selected_sat != NULL && &satellites[i] != selected_sat) continue;
+                for (int i = 0; i < sat_count; i++) {
+                    if (!satellites[i].is_active) continue;
+                    if (hide_unselected && selected_sat != NULL && &satellites[i] != selected_sat) continue;
 
-                Vector3 draw_pos = Vector3Scale(satellites[i].current_pos, 1.0f / DRAW_SCALE);
-                if (Vector3DistanceSqr(camera3d.target, draw_pos) > (camDistance * camDistance * 16.0f)) continue; 
-                
-                float distToCam = Vector3Distance(camera3d.position, draw_pos);
-                float hit_radius_3d = 0.015f * distToCam * cfg.ui_scale;
+                    Vector3 draw_pos = Vector3Scale(satellites[i].current_pos, 1.0f / DRAW_SCALE);
+                    if (Vector3DistanceSqr(Camera3DParams.target, draw_pos) > (camDistance * camDistance * 16.0f)) continue; 
+                    
+                    float distToCam = Vector3Distance(Camera3DParams.position, draw_pos);
+                    float hit_radius_3d = 0.015f * distToCam * cfg.ui_scale;
 
-                RayCollision col = GetRayCollisionSphere(mouseRay, draw_pos, hit_radius_3d); 
-                if (col.hit && col.distance < closest_dist) { closest_dist = col.distance; hovered_sat = &satellites[i]; }
+                    RayCollision col = GetRayCollisionSphere(mouseRay, draw_pos, hit_radius_3d); 
+                    if (col.hit && col.distance < closest_dist) { closest_dist = col.distance; hovered_sat = &satellites[i]; }
+                }
             }
         }
 
-        // define UI layout regions
-        Rectangle helpWindow = { hw_x, hw_y, 900 * cfg.ui_scale, 140 * cfg.ui_scale };
-        Rectangle settingsWindow = { sw_x, sw_y, 220 * cfg.ui_scale, 140 * cfg.ui_scale };
-        Rectangle timeWindow = { td_x, td_y, 520 * cfg.ui_scale, 240 * cfg.ui_scale };
-        Rectangle tleWindow = { (GetScreenWidth() - 300*cfg.ui_scale)/2.0f, (GetScreenHeight() - 130*cfg.ui_scale)/2.0f, 300*cfg.ui_scale, 130*cfg.ui_scale };
-        
-        float pass_w = 480 * cfg.ui_scale;
-        float pass_h = (60 + (num_passes == 0 ? 1 : num_passes) * 55) * cfg.ui_scale;
-        Rectangle passesWindow = { pd_x, pd_y, pass_w, pass_h };
-        Rectangle polarWindow = { pl_x, pl_y, 300 * cfg.ui_scale, 390 * cfg.ui_scale };
-        Rectangle dopplerWindow = { dop_x, dop_y, 700 * cfg.ui_scale, 450 * cfg.ui_scale };
-
-        Rectangle btnHelp = { 10 * cfg.ui_scale, GetScreenHeight() - 40 * cfg.ui_scale, 30 * cfg.ui_scale, 30 * cfg.ui_scale };
-        Rectangle btnSet  = { 45 * cfg.ui_scale, GetScreenHeight() - 40 * cfg.ui_scale, 30 * cfg.ui_scale, 30 * cfg.ui_scale };
-
-        Rectangle btnRewind = { 10 * cfg.ui_scale, 10 * cfg.ui_scale, 30 * cfg.ui_scale, 30 * cfg.ui_scale };
-        Rectangle btnPlayPause = { 45 * cfg.ui_scale, 10 * cfg.ui_scale, 30 * cfg.ui_scale, 30 * cfg.ui_scale };
-        Rectangle btnFastForward = { 80 * cfg.ui_scale, 10 * cfg.ui_scale, 30 * cfg.ui_scale, 30 * cfg.ui_scale };
-        Rectangle btnNow = { 115 * cfg.ui_scale, 10 * cfg.ui_scale, 30 * cfg.ui_scale, 30 * cfg.ui_scale };
-        Rectangle btnClock = { 150 * cfg.ui_scale, 10 * cfg.ui_scale, 30 * cfg.ui_scale, 30 * cfg.ui_scale };
-        Rectangle btnPasses = { 185 * cfg.ui_scale, 10 * cfg.ui_scale, 30 * cfg.ui_scale, 30 * cfg.ui_scale };
-
-        // check if mouse is over any UI element to prevent world interaction
-        bool over_ui = false;
-        if (CheckCollisionPointRec(GetMousePosition(), btnHelp)) over_ui = true;
-        if (CheckCollisionPointRec(GetMousePosition(), btnSet)) over_ui = true;
-        if (CheckCollisionPointRec(GetMousePosition(), btnRewind)) over_ui = true;
-        if (CheckCollisionPointRec(GetMousePosition(), btnPlayPause)) over_ui = true;
-        if (CheckCollisionPointRec(GetMousePosition(), btnFastForward)) over_ui = true;
-        if (CheckCollisionPointRec(GetMousePosition(), btnNow)) over_ui = true;
-        if (CheckCollisionPointRec(GetMousePosition(), btnClock)) over_ui = true;
-        if (CheckCollisionPointRec(GetMousePosition(), btnPasses)) over_ui = true;
-
-        if (show_help && CheckCollisionPointRec(GetMousePosition(), helpWindow)) over_ui = true;
-        if (show_settings && CheckCollisionPointRec(GetMousePosition(), settingsWindow)) over_ui = true;
-        if (show_time_dialog && CheckCollisionPointRec(GetMousePosition(), timeWindow)) over_ui = true;
-        if (show_passes_dialog && CheckCollisionPointRec(GetMousePosition(), passesWindow)) over_ui = true;
-        if (show_polar_dialog && CheckCollisionPointRec(GetMousePosition(), polarWindow)) over_ui = true;
-        if (show_doppler_dialog && CheckCollisionPointRec(GetMousePosition(), dopplerWindow)) over_ui = true;
-        if (show_tle_warning && CheckCollisionPointRec(GetMousePosition(), tleWindow)) over_ui = true;
-
-        // handle clicking/locking on objects
+        /* selection and double click for planet locking */
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             if (!over_ui) {
-                edit_year = false; edit_month = false; edit_day = false;
-                edit_hour = false; edit_min = false; edit_sec = false;
-                edit_unix = false;
-                edit_doppler_freq = false; edit_doppler_res = false; edit_doppler_file = false;
-
                 selected_sat = hovered_sat; 
 
                 double current_time = GetTime();
                 if (current_time - last_left_click_time < 0.3) {
                     if (is_2d_view) {
-                        Vector2 mouseWorld = GetScreenToWorld2D(GetMousePosition(), camera2d);
+                        Vector2 mouseWorld = GetScreenToWorld2D(GetMousePosition(), Camera2DParams);
                         bool hit_moon = false;
                         for (int offset_i = -1; offset_i <= 1; offset_i++) {
                             float x_off = offset_i * map_w;
-                            if (Vector2Distance(mouseWorld, (Vector2){moon_mx + x_off, moon_my}) < (15.0f * cfg.ui_scale / camera2d.zoom)) {
+                            if (Vector2Distance(mouseWorld, (Vector2){moon_mx + x_off, moon_my}) < (15.0f * cfg.ui_scale / Camera2DParams.zoom)) {
                                 hit_moon = true;
                                 break;
                             }
                         }
                         active_lock = hit_moon ? LOCK_MOON : LOCK_EARTH;
                     } else {
-                        Ray mouseRay = GetMouseRay(GetMousePosition(), camera3d);
+                        Ray mouseRay = GetMouseRay(GetMousePosition(), Camera3DParams);
                         RayCollision earthCol = GetRayCollisionSphere(mouseRay, Vector3Zero(), draw_earth_radius);
                         RayCollision moonCol = GetRayCollisionSphere(mouseRay, draw_moon_pos, draw_moon_radius);
 
@@ -703,7 +571,7 @@ int main(void) {
             }
         }
 
-        // update camera targets based on lock state
+        /* update camera interpolation targets */
         if (active_lock == LOCK_EARTH) {
             if (is_2d_view) target_camera2d_target = Vector2Zero();
             else target_camera3d_target = Vector3Zero();
@@ -712,38 +580,31 @@ int main(void) {
             else target_camera3d_target = draw_moon_pos;
         }
 
-        // smooth camera interpolation
         float smooth_speed = 10.0f * GetFrameTime();
         
-        camera2d.zoom = Lerp(camera2d.zoom, target_camera2d_zoom, smooth_speed);
-        camera2d.target = Vector2Lerp(camera2d.target, target_camera2d_target, smooth_speed);
+        Camera2DParams.zoom = Lerp(Camera2DParams.zoom, target_camera2d_zoom, smooth_speed);
+        Camera2DParams.target = Vector2Lerp(Camera2DParams.target, target_camera2d_target, smooth_speed);
         
         camAngleX = Lerp(camAngleX, target_camAngleX, smooth_speed);
         camAngleY = Lerp(camAngleY, target_camAngleY, smooth_speed);
         camDistance = Lerp(camDistance, target_camDistance, smooth_speed);
-        camera3d.target = Vector3Lerp(camera3d.target, target_camera3d_target, smooth_speed);
+        Camera3DParams.target = Vector3Lerp(Camera3DParams.target, target_camera3d_target, smooth_speed);
 
         if (!is_2d_view) {
-            camera3d.position.x = camera3d.target.x + camDistance * cosf(camAngleY) * sinf(camAngleX);
-            camera3d.position.y = camera3d.target.y + camDistance * sinf(camAngleY);
-            camera3d.position.z = camera3d.target.z + camDistance * cosf(camAngleY) * cosf(camAngleX);
+            Camera3DParams.position.x = Camera3DParams.target.x + camDistance * cosf(camAngleY) * sinf(camAngleX);
+            Camera3DParams.position.y = Camera3DParams.target.y + camDistance * sinf(camAngleY);
+            Camera3DParams.position.z = Camera3DParams.target.z + camDistance * cosf(camAngleY) * cosf(camAngleX);
         }
 
         Satellite* active_sat = hovered_sat ? hovered_sat : selected_sat;
 
-        if (show_passes_dialog && selected_sat) {
-            if (last_pass_calc_sat != selected_sat || (num_passes > 0 && current_epoch > passes[0].los_epoch + 1.0/1440.0)) {
-                CalculatePasses(selected_sat, current_epoch);
-            }
-        }
-
-        // calculate radio footprint geometry
+        /* calculate radio footprint (visibility cone) */
         #define FP_RINGS 12
         #define FP_PTS 120
         Vector3 fp_grid[FP_RINGS + 1][FP_PTS];
         bool has_footprint = false;
         
-        if (active_sat) {
+        if (active_sat && active_sat->is_active) {
             float r = Vector3Length(active_sat->current_pos);
             if (r > EARTH_RADIUS_KM) {
                 has_footprint = true;
@@ -768,13 +629,13 @@ int main(void) {
         BeginDrawing();
         ClearBackground(cfg.bg_color);
 
-        float m_size_2d = 24.0f * cfg.ui_scale / camera2d.zoom;
-        float m_text_2d = 16.0f * cfg.ui_scale / camera2d.zoom;
-        float mark_size_2d = 32.0f * cfg.ui_scale / camera2d.zoom;
+        float m_size_2d = 24.0f * cfg.ui_scale / Camera2DParams.zoom;
+        float m_text_2d = 16.0f * cfg.ui_scale / Camera2DParams.zoom;
+        float mark_size_2d = 32.0f * cfg.ui_scale / Camera2DParams.zoom;
 
+        /* 2d projection rendering */
         if (is_2d_view) {
-            // start of 2D map rendering
-            BeginMode2D(camera2d);
+            BeginMode2D(Camera2DParams);
                 if (cfg.show_night_lights) {
                     BeginShaderMode(shader2D);
                     SetShaderValueTexture(shader2D, nightTexLoc2D, earthNightTexture);
@@ -788,13 +649,11 @@ int main(void) {
                 DrawTexturePro(earthTexture, (Rectangle){0, 0, earthTexture.width, earthTexture.height}, 
                     (Rectangle){-map_w/2, -map_h/2, map_w, map_h}, (Vector2){0,0}, 0.0f, WHITE);
 
-                if (cfg.show_night_lights) {
-                    EndShaderMode();
-                }
+                if (cfg.show_night_lights) EndShaderMode();
 
-                // calculate scissor area to prevent drawing outside map bounds
-                Vector2 mapMin = GetWorldToScreen2D((Vector2){-map_w/2.0f, -map_h/2.0f}, camera2d);
-                Vector2 mapMax = GetWorldToScreen2D((Vector2){map_w/2.0f, map_h/2.0f}, camera2d);
+                /* scissor mode for map boundaries */
+                Vector2 mapMin = GetWorldToScreen2D((Vector2){-map_w/2.0f, -map_h/2.0f}, Camera2DParams);
+                Vector2 mapMax = GetWorldToScreen2D((Vector2){map_w/2.0f, map_h/2.0f}, Camera2DParams);
                 
                 int sc_x = (int)mapMin.x, sc_y = (int)mapMin.y;
                 int sc_w = (int)(mapMax.x - mapMin.x), sc_h = (int)(mapMax.y - mapMin.y);
@@ -807,8 +666,8 @@ int main(void) {
                 if (sc_w > 0 && sc_h > 0) {
                     BeginScissorMode(sc_x, sc_y, sc_w, sc_h);
 
-                    // draw footprint coverage triangles
-                    if (active_sat && has_footprint) {
+                    /* draw 2d footprint */
+                    if (active_sat && has_footprint && active_sat->is_active) {
                         for (int i = 0; i < FP_RINGS; i++) {
                             for (int k = 0; k < FP_PTS; k++) {
                                 int next = (k + 1) % FP_PTS;
@@ -837,14 +696,15 @@ int main(void) {
                             if (x2 - x1 > map_w * 0.6f) x2 -= map_w; else if (x2 - x1 < -map_w * 0.6f) x2 += map_w;
                             for (int offset_i = -1; offset_i <= 1; offset_i++) {
                                 if (fabs(x2 - x1) < map_w * 0.6f) {
-                                    DrawLineEx((Vector2){x1 + offset_i*map_w, y1}, (Vector2){x2 + offset_i*map_w, y2}, 2.0f/camera2d.zoom, cfg.footprint_border);
+                                    DrawLineEx((Vector2){x1 + offset_i*map_w, y1}, (Vector2){x2 + offset_i*map_w, y2}, 2.0f/Camera2DParams.zoom, cfg.footprint_border);
                                 }
                             }
                         }
                     }
 
-                    // draw satellites and their ground tracks
+                    /* render all sats on 2d map */
                     for (int i = 0; i < sat_count; i++) {
+                        if (!satellites[i].is_active) continue;
                         bool is_unselected = (selected_sat != NULL && &satellites[i] != selected_sat);
                         float sat_alpha = is_unselected ? unselected_fade : 1.0f;
                         if (sat_alpha <= 0.0f) continue;
@@ -870,7 +730,7 @@ int main(void) {
                                 float x_off = offset_i * map_w;
                                 for (int j = 1; j <= segments; j++) {
                                     if (fabs(track_pts[j].x - track_pts[j-1].x) < map_w * 0.6f) {
-                                        DrawLineEx((Vector2){track_pts[j-1].x+x_off, track_pts[j-1].y}, (Vector2){track_pts[j].x+x_off, track_pts[j].y}, 2.0f/camera2d.zoom, ApplyAlpha(cfg.orbit_highlighted, sat_alpha));
+                                        DrawLineEx((Vector2){track_pts[j-1].x+x_off, track_pts[j-1].y}, (Vector2){track_pts[j].x+x_off, track_pts[j].y}, 2.0f/Camera2DParams.zoom, ApplyAlpha(cfg.orbit_highlighted, sat_alpha));
                                     }
                                 }
 
@@ -893,7 +753,7 @@ int main(void) {
                         }
                     }
 
-                    // draw home and observer markers
+                    /* ground station markers */
                     float hx = (home_location.lon / 360.0f) * map_w;
                     float hy = -(home_location.lat / 180.0f) * map_h;
                     for (int offset_i = -1; offset_i <= 1; offset_i++) {
@@ -901,21 +761,23 @@ int main(void) {
                         DrawTexturePro(markerIcon, (Rectangle){0,0,markerIcon.width,markerIcon.height}, 
                             (Rectangle){hx+x_off, hy, m_size_2d, m_size_2d}, (Vector2){m_size_2d/2.f, m_size_2d/2.f}, 0.0f, WHITE);
                         
-                        if (camera2d.zoom > 0.1f) {
-                            DrawUIText(home_location.name, hx+x_off+(m_size_2d/2.f)+4.f, hy-(m_size_2d/2.f), m_text_2d, WHITE);
+                        if (Camera2DParams.zoom > 0.1f) {
+                            DrawUIText(customFont, home_location.name, hx+x_off+(m_size_2d/2.f)+4.f, hy-(m_size_2d/2.f), m_text_2d, WHITE);
                         }
                     }
 
-                    for (int m = 0; m < marker_count; m++) {
-                        float mx = (markers[m].lon / 360.0f) * map_w;
-                        float my = -(markers[m].lat / 180.0f) * map_h;
-                        for (int offset_i = -1; offset_i <= 1; offset_i++) {
-                            float x_off = offset_i * map_w;
-                            DrawTexturePro(markerIcon, (Rectangle){0,0,markerIcon.width,markerIcon.height}, 
-                                (Rectangle){mx+x_off, my, m_size_2d, m_size_2d}, (Vector2){m_size_2d/2.f, m_size_2d/2.f}, 0.0f, WHITE);
-                            
-                            if (camera2d.zoom > 0.1f) {
-                                DrawUIText(markers[m].name, mx+x_off+(m_size_2d/2.f)+4.f, my-(m_size_2d/2.f), m_text_2d, WHITE);
+                    if (cfg.show_markers) {
+                        for (int m = 0; m < marker_count; m++) {
+                            float mx = (markers[m].lon / 360.0f) * map_w;
+                            float my = -(markers[m].lat / 180.0f) * map_h;
+                            for (int offset_i = -1; offset_i <= 1; offset_i++) {
+                                float x_off = offset_i * map_w;
+                                DrawTexturePro(markerIcon, (Rectangle){0,0,markerIcon.width,markerIcon.height}, 
+                                    (Rectangle){mx+x_off, my, m_size_2d, m_size_2d}, (Vector2){m_size_2d/2.f, m_size_2d/2.f}, 0.0f, WHITE);
+                                
+                                if (Camera2DParams.zoom > 0.1f) {
+                                    DrawUIText(customFont, markers[m].name, mx+x_off+(m_size_2d/2.f)+4.f, my-(m_size_2d/2.f), m_text_2d, WHITE);
+                                }
                             }
                         }
                     }
@@ -924,8 +786,8 @@ int main(void) {
                 }
             EndMode2D();
         } else {
-            // start of 3D globe rendering
-            BeginMode3D(camera3d);
+            /* 3d globe rendering */
+            BeginMode3D(Camera3DParams);
                 earthModel.transform = MatrixRotateY((gmst_deg + cfg.earth_rotation_offset) * DEG2RAD);
                 
                 if (cfg.show_night_lights) {
@@ -940,7 +802,7 @@ int main(void) {
 
                 DrawModel(earthModel, Vector3Zero(), 1.0f, WHITE);
 
-                // render animated cloud layer
+                /* atmosphere/cloud layer */
                 if (cfg.show_clouds) {
                     double continuous_cloud_angle = fmod(gmst_deg + cfg.earth_rotation_offset + (current_epoch * 360.0 * 0.04), 360.0);
                     float cloud_rot_rad = (float)(continuous_cloud_angle * DEG2RAD);
@@ -960,8 +822,8 @@ int main(void) {
 
                 DrawModel(moonModel, draw_moon_pos, 1.0f, WHITE);
 
-                // draw radio footprints on globe surface
-                if (active_sat && has_footprint) {
+                /* 3d footprint triangles */
+                if (active_sat && has_footprint && active_sat->is_active) {
                     for (int i = 0; i < FP_RINGS; i++) {
                         for (int k = 0; k < FP_PTS; k++) {
                             int next = (k + 1) % FP_PTS;
@@ -978,6 +840,7 @@ int main(void) {
                 }
 
                 for (int i = 0; i < sat_count; i++) {
+                    if (!satellites[i].is_active) continue;
                     bool is_unselected = (selected_sat != NULL && &satellites[i] != selected_sat);
                     float sat_alpha = is_unselected ? unselected_fade : 1.0f;
                     if (sat_alpha <= 0.0f) continue;
@@ -992,12 +855,12 @@ int main(void) {
                 }
             EndMode3D();
 
+            /* screen-space icons/text for 3d objects */
             float m_size_3d = 24.0f * cfg.ui_scale;
             float m_text_3d = 16.0f * cfg.ui_scale;
             float mark_size_3d = 32.0f * cfg.ui_scale;
 
-            // overlay periapsis/apoapsis indicators on the 3D view
-            if (active_sat) {
+            if (active_sat && active_sat->is_active) {
                 bool is_unselected = (selected_sat != NULL && active_sat != selected_sat);
                 float sat_alpha = is_unselected ? unselected_fade : 1.0f;
                 
@@ -1007,634 +870,103 @@ int main(void) {
                 Vector3 draw_p = Vector3Scale(calculate_position(active_sat, t_peri_unix), 1.0f/DRAW_SCALE);
                 Vector3 draw_a = Vector3Scale(calculate_position(active_sat, t_apo_unix), 1.0f/DRAW_SCALE);
 
-                if (!IsOccludedByEarth(camera3d.position, draw_p, draw_earth_radius)) {
-                    Vector2 sp = GetWorldToScreen(draw_p, camera3d);
+                if (!IsOccludedByEarth(Camera3DParams.position, draw_p, draw_earth_radius)) {
+                    Vector2 sp = GetWorldToScreen(draw_p, Camera3DParams);
                     DrawTexturePro(periMark, (Rectangle){0,0,periMark.width,periMark.height}, 
                         (Rectangle){sp.x, sp.y, mark_size_3d, mark_size_3d}, (Vector2){mark_size_3d/2.f, mark_size_3d/2.f}, 0.0f, ApplyAlpha(cfg.periapsis, sat_alpha));
                 }
-                if (!IsOccludedByEarth(camera3d.position, draw_a, draw_earth_radius)) {
-                    Vector2 sp = GetWorldToScreen(draw_a, camera3d);
+                if (!IsOccludedByEarth(Camera3DParams.position, draw_a, draw_earth_radius)) {
+                    Vector2 sp = GetWorldToScreen(draw_a, Camera3DParams);
                     DrawTexturePro(apoMark, (Rectangle){0,0,apoMark.width,apoMark.height}, 
                         (Rectangle){sp.x, sp.y, mark_size_3d, mark_size_3d}, (Vector2){mark_size_3d/2.f, mark_size_3d/2.f}, 0.0f, ApplyAlpha(cfg.apoapsis, sat_alpha));
                 }
             }
 
-            // draw satellite icons with occlusion checking
             for (int i = 0; i < sat_count; i++) {
+                if (!satellites[i].is_active) continue;
                 bool is_unselected = (selected_sat != NULL && &satellites[i] != selected_sat);
                 float sat_alpha = is_unselected ? unselected_fade : 1.0f;
                 if (sat_alpha <= 0.0f) continue;
 
                 Vector3 draw_pos = Vector3Scale(satellites[i].current_pos, 1.0f / DRAW_SCALE);
-                Vector3 toTarget = Vector3Subtract(draw_pos, camera3d.position);
-                Vector3 camForward = Vector3Normalize(Vector3Subtract(camera3d.target, camera3d.position));
+                Vector3 toTarget = Vector3Subtract(draw_pos, Camera3DParams.position);
+                Vector3 camForward = Vector3Normalize(Vector3Subtract(Camera3DParams.target, Camera3DParams.position));
 
-                if (Vector3DotProduct(toTarget, camForward) > 0.0f && !IsOccludedByEarth(camera3d.position, draw_pos, draw_earth_radius)) {
+                if (Vector3DotProduct(toTarget, camForward) > 0.0f && !IsOccludedByEarth(Camera3DParams.position, draw_pos, draw_earth_radius)) {
                     Color sCol = (selected_sat == &satellites[i]) ? cfg.sat_selected : (hovered_sat == &satellites[i]) ? cfg.sat_highlighted : cfg.sat_normal;
                     sCol = ApplyAlpha(sCol, sat_alpha);
-                    Vector2 sp = GetWorldToScreen(draw_pos, camera3d);
+                    Vector2 sp = GetWorldToScreen(draw_pos, Camera3DParams);
                     DrawTexturePro(satIcon, (Rectangle){0,0,satIcon.width,satIcon.height}, 
                         (Rectangle){sp.x, sp.y, m_size_3d, m_size_3d}, (Vector2){m_size_3d/2.f, m_size_3d/2.f}, 0.0f, sCol);
                 }
             }
 
-            Vector3 camForward = Vector3Normalize(Vector3Subtract(camera3d.target, camera3d.position));
+            Vector3 camForward = Vector3Normalize(Vector3Subtract(Camera3DParams.target, Camera3DParams.position));
 
-            // map-to-3D projection for ground markers
             float h_lat_rad = home_location.lat * DEG2RAD, h_lon_rad = (home_location.lon + gmst_deg + cfg.earth_rotation_offset) * DEG2RAD;
             Vector3 h_pos = { cosf(h_lat_rad)*cosf(h_lon_rad)*draw_earth_radius, sinf(h_lat_rad)*draw_earth_radius, -cosf(h_lat_rad)*sinf(h_lon_rad)*draw_earth_radius };
             Vector3 h_normal = Vector3Normalize(h_pos);
-            Vector3 h_viewDir = Vector3Normalize(Vector3Subtract(camera3d.position, h_pos));
-            Vector3 h_toTarget = Vector3Subtract(h_pos, camera3d.position);
+            Vector3 h_viewDir = Vector3Normalize(Vector3Subtract(Camera3DParams.position, h_pos));
+            Vector3 h_toTarget = Vector3Subtract(h_pos, Camera3DParams.position);
             
             if (Vector3DotProduct(h_normal, h_viewDir) > 0.0f && Vector3DotProduct(h_toTarget, camForward) > 0.0f) {
-                Vector2 sp = GetWorldToScreen(h_pos, camera3d);
+                Vector2 sp = GetWorldToScreen(h_pos, Camera3DParams);
                 DrawTexturePro(markerIcon, (Rectangle){0,0,markerIcon.width,markerIcon.height}, 
                     (Rectangle){sp.x, sp.y, m_size_3d, m_size_3d}, (Vector2){m_size_3d/2.f, m_size_3d/2.f}, 0.0f, WHITE);
                 
                 if (camDistance < 50.0f) {
-                    DrawUIText(home_location.name, sp.x+(m_size_3d/2.f)+4.f, sp.y-(m_size_3d/2.f), m_text_3d, WHITE);
+                    DrawUIText(customFont, home_location.name, sp.x+(m_size_3d/2.f)+4.f, sp.y-(m_size_3d/2.f), m_text_3d, WHITE);
                 }
             }
 
-            for (int m = 0; m < marker_count; m++) {
-                float lat_rad = markers[m].lat * DEG2RAD, lon_rad = (markers[m].lon + gmst_deg + cfg.earth_rotation_offset) * DEG2RAD;
-                Vector3 m_pos = { cosf(lat_rad)*cosf(lon_rad)*draw_earth_radius, sinf(lat_rad)*draw_earth_radius, -cosf(lat_rad)*sinf(lon_rad)*draw_earth_radius };
-                Vector3 normal = Vector3Normalize(m_pos);
-                Vector3 viewDir = Vector3Normalize(Vector3Subtract(camera3d.position, m_pos));
-                Vector3 toTarget = Vector3Subtract(m_pos, camera3d.position);
+            if (cfg.show_markers) {
+                for (int m = 0; m < marker_count; m++) {
+                    float lat_rad = markers[m].lat * DEG2RAD, lon_rad = (markers[m].lon + gmst_deg + cfg.earth_rotation_offset) * DEG2RAD;
+                    Vector3 m_pos = { cosf(lat_rad)*cosf(lon_rad)*draw_earth_radius, sinf(lat_rad)*draw_earth_radius, -cosf(lat_rad)*sinf(lon_rad)*draw_earth_radius };
+                    Vector3 normal = Vector3Normalize(m_pos);
+                    Vector3 viewDir = Vector3Normalize(Vector3Subtract(Camera3DParams.position, m_pos));
+                    Vector3 toTarget = Vector3Subtract(m_pos, Camera3DParams.position);
 
-                if (Vector3DotProduct(normal, viewDir) > 0.0f && Vector3DotProduct(toTarget, camForward) > 0.0f) {
-                    Vector2 sp = GetWorldToScreen(m_pos, camera3d);
-                    DrawTexturePro(markerIcon, (Rectangle){0,0,markerIcon.width,markerIcon.height}, 
-                        (Rectangle){sp.x, sp.y, m_size_3d, m_size_3d}, (Vector2){m_size_3d/2.f, m_size_3d/2.f}, 0.0f, WHITE);
-                    
-                    if (camDistance < 50.0f) {
-                        DrawUIText(markers[m].name, sp.x+(m_size_3d/2.f)+4.f, sp.y-(m_size_3d/2.f), m_text_3d, WHITE);
-                    }
-                }
-            }
-        }
-
-        // render top status bar
-        char top_text[128];
-        sprintf(top_text, "%s | Speed: %gx %s", datetime_str, time_multiplier, (time_multiplier == 0.0) ? "[PAUSED]" : "");
-        DrawUIText(top_text, 230*cfg.ui_scale, 15*cfg.ui_scale, 20*cfg.ui_scale, cfg.text_main);
-
-        // real-time indicator rendering
-        if (time_multiplier == 1.0 && fabs(current_epoch - get_current_real_time_epoch()) < (5.0 / 86400.0) && !is_auto_warping) {
-            float blink_alpha = (sinf(GetTime() * 4.0f) * 0.5f + 0.5f);
-            
-            int oldStyle = GuiGetStyle(LABEL, TEXT_COLOR_NORMAL);
-            GuiSetStyle(LABEL, TEXT_COLOR_NORMAL, ColorToInt(ApplyAlpha(cfg.ui_accent, blink_alpha)));
-            GuiLabel((Rectangle){ 230*cfg.ui_scale, 34*cfg.ui_scale, 20*cfg.ui_scale, 20*cfg.ui_scale }, "#212#");
-            GuiSetStyle(LABEL, TEXT_COLOR_NORMAL, oldStyle);
-
-            DrawUIText("REAL TIME", 255*cfg.ui_scale, 40*cfg.ui_scale, 16*cfg.ui_scale, cfg.ui_accent);
-        }
-
-        // render satellite info box near the icon (moved before UI rendering for under-draw)
-        if (active_sat) {
-            Vector2 screenPos;
-            if (is_2d_view) {
-                float sat_mx, sat_my;
-                get_map_coordinates(active_sat->current_pos, gmst_deg, cfg.earth_rotation_offset, map_w, map_h, &sat_mx, &sat_my);
-                float cam_x = camera2d.target.x;
-                
-                while (sat_mx - cam_x > map_w/2.0f) sat_mx -= map_w;
-                while (sat_mx - cam_x < -map_w/2.0f) sat_mx += map_w;
-                
-                screenPos = GetWorldToScreen2D((Vector2){sat_mx, sat_my}, camera2d);
-            } else {
-                screenPos = GetWorldToScreen(Vector3Scale(active_sat->current_pos, 1.0f/DRAW_SCALE), camera3d);
-            }
-            
-            float boxW = 280*cfg.ui_scale;
-            float boxH = 185*cfg.ui_scale;
-            float boxX = screenPos.x + (15*cfg.ui_scale);
-            float boxY = screenPos.y + (15*cfg.ui_scale);
-            
-            if (boxX + boxW > GetScreenWidth()) boxX = screenPos.x - boxW - (15*cfg.ui_scale);
-            if (boxY + boxH > GetScreenHeight()) boxY = screenPos.y - boxH - (15*cfg.ui_scale);
-
-            DrawRectangle(boxX - (5*cfg.ui_scale), boxY - (5*cfg.ui_scale), boxW, boxH, cfg.ui_bg);
-            
-            Color titleColor = (active_sat == hovered_sat) ? cfg.sat_highlighted : cfg.sat_selected;
-            DrawUIText(active_sat->name, boxX, boxY, 20*cfg.ui_scale, titleColor);
-            
-            double r_km = Vector3Length(active_sat->current_pos);
-            double v_kms = sqrt(MU * (2.0/r_km - 1.0/active_sat->semi_major_axis));
-            float lat_deg = asinf(active_sat->current_pos.y / r_km) * RAD2DEG;
-            float lon_deg = (atan2f(-active_sat->current_pos.z, active_sat->current_pos.x) - ((gmst_deg + cfg.earth_rotation_offset)*DEG2RAD)) * RAD2DEG;
-            
-            while (lon_deg > 180.0f) lon_deg -= 360.0f;
-            while (lon_deg < -180.0f) lon_deg += 360.0f;
-
-            char info[256];
-            sprintf(info, "Inc: %.2f deg\nRAAN: %.2f deg\nEcc: %.5f\nAlt: %.2f km\nSpd: %.2f km/s\nLat: %.2f deg\nLon: %.2f deg", 
-                    active_sat->inclination*RAD2DEG, active_sat->raan*RAD2DEG, active_sat->eccentricity, r_km-EARTH_RADIUS_KM, v_kms, lat_deg, lon_deg);
-            DrawUIText(info, boxX, boxY + (28*cfg.ui_scale), 18*cfg.ui_scale, cfg.text_main);
-
-            // draw textual altitude info at peri/apo points
-            Vector2 periScreen, apoScreen;
-            bool show_peri = true;
-            bool show_apo = true;
-
-            double t_peri_unix, t_apo_unix;
-            get_apsis_times(active_sat, current_epoch, &t_peri_unix, &t_apo_unix);
-
-            double real_rp = Vector3Length(calculate_position(active_sat, t_peri_unix));
-            double real_ra = Vector3Length(calculate_position(active_sat, t_apo_unix));
-            
-            if (is_2d_view) {
-                Vector2 p2, a2;
-                get_apsis_2d(active_sat, current_epoch, false, gmst_deg, cfg.earth_rotation_offset, map_w, map_h, &p2);
-                get_apsis_2d(active_sat, current_epoch, true, gmst_deg, cfg.earth_rotation_offset, map_w, map_h, &a2);
-                float cam_x = camera2d.target.x;
-                
-                while (p2.x - cam_x > map_w/2.0f) p2.x -= map_w; 
-                while (p2.x - cam_x < -map_w/2.0f) p2.x += map_w;
-                while (a2.x - cam_x > map_w/2.0f) a2.x -= map_w; 
-                while (a2.x - cam_x < -map_w/2.0f) a2.x += map_w;
-                
-                periScreen = GetWorldToScreen2D(p2, camera2d);
-                apoScreen = GetWorldToScreen2D(a2, camera2d);
-            } else {
-                Vector3 draw_p = Vector3Scale(calculate_position(active_sat, t_peri_unix), 1.0f/DRAW_SCALE);
-                Vector3 draw_a = Vector3Scale(calculate_position(active_sat, t_apo_unix), 1.0f/DRAW_SCALE);
-                
-                if (IsOccludedByEarth(camera3d.position, draw_p, draw_earth_radius)) show_peri = false;
-                if (IsOccludedByEarth(camera3d.position, draw_a, draw_earth_radius)) show_apo = false;
-                
-                periScreen = GetWorldToScreen(draw_p, camera3d);
-                apoScreen = GetWorldToScreen(draw_a, camera3d);
-            }
-            
-            float text_size = 16.0f * cfg.ui_scale;
-            float x_offset = 20.0f * cfg.ui_scale;
-            float y_offset = text_size / 2.2f;
-
-            if (show_peri) DrawUIText(TextFormat("Peri: %.0f km", real_rp-EARTH_RADIUS_KM), periScreen.x + x_offset, periScreen.y - y_offset, text_size, cfg.periapsis);
-            if (show_apo) DrawUIText(TextFormat("Apo: %.0f km", real_ra-EARTH_RADIUS_KM), apoScreen.x + x_offset, apoScreen.y - y_offset, text_size, cfg.apoapsis);
-        }
-
-        // global UI style configuration
-        GuiSetStyle(DEFAULT, TEXT_SIZE, 16 * cfg.ui_scale);
-        GuiSetStyle(DEFAULT, BACKGROUND_COLOR, ColorToInt(cfg.ui_primary));
-        GuiSetStyle(DEFAULT, LINE_COLOR, ColorToInt(cfg.ui_secondary)); 
-        GuiSetStyle(DEFAULT, BASE_COLOR_NORMAL, ColorToInt(cfg.ui_primary));
-        GuiSetStyle(DEFAULT, BASE_COLOR_FOCUSED, ColorToInt(cfg.ui_secondary));
-        GuiSetStyle(DEFAULT, BASE_COLOR_PRESSED, ColorToInt(cfg.ui_accent));
-        GuiSetStyle(DEFAULT, BORDER_COLOR_NORMAL, ColorToInt(cfg.ui_secondary));
-        GuiSetStyle(DEFAULT, BORDER_COLOR_FOCUSED, ColorToInt(cfg.ui_accent));
-        GuiSetStyle(DEFAULT, BORDER_COLOR_PRESSED, ColorToInt(cfg.ui_accent));
-        GuiSetStyle(DEFAULT, TEXT_COLOR_NORMAL, ColorToInt(cfg.text_main));
-        GuiSetStyle(DEFAULT, TEXT_COLOR_FOCUSED, ColorToInt(cfg.text_main));
-        GuiSetStyle(DEFAULT, TEXT_COLOR_PRESSED, ColorToInt(cfg.text_main)); 
-        GuiSetStyle(CHECKBOX, TEXT_PADDING, 8 * cfg.ui_scale);
-        GuiSetStyle(TEXTBOX, BORDER_COLOR_FOCUSED, ColorToInt(cfg.ui_secondary));
-        GuiSetStyle(TEXTBOX, BORDER_COLOR_PRESSED, ColorToInt(cfg.ui_secondary));
-        GuiSetStyle(TEXTBOX, TEXT_COLOR_FOCUSED, ColorToInt(cfg.text_main));
-        GuiSetStyle(TEXTBOX, TEXT_COLOR_PRESSED, ColorToInt(cfg.text_main));
-        GuiSetStyle(TEXTBOX, BASE_COLOR_PRESSED, ColorToInt(cfg.ui_primary));
-
-        // render main UI buttons
-        if (GuiButton(btnHelp, "#193#")) show_help = !show_help;
-        if (GuiButton(btnSet, "#142#")) show_settings = !show_settings;
-
-        if (GuiButton(btnRewind, "#118#")) { is_auto_warping = false; time_multiplier = StepTimeMultiplier(time_multiplier, false); }
-        if (GuiButton(btnPlayPause, (time_multiplier == 0.0) ? "#131#" : "#132#")) {
-            is_auto_warping = false;
-            if (time_multiplier != 0.0) {
-                saved_multiplier = time_multiplier;
-                time_multiplier = 0.0;
-            } else {
-                time_multiplier = saved_multiplier != 0.0 ? saved_multiplier : 1.0;
-            }
-        }
-        if (GuiButton(btnFastForward, "#119#")) { is_auto_warping = false; time_multiplier = StepTimeMultiplier(time_multiplier, true); }
-        
-        if (GuiButton(btnNow, "#143#")) { 
-            is_auto_warping = false;
-            current_epoch = get_current_real_time_epoch();
-            time_multiplier = 1.0;
-            saved_multiplier = 1.0;
-        }
-        
-        if (GuiButton(btnClock, "#139#")) { 
-            show_time_dialog = !show_time_dialog;
-            if (show_time_dialog) {
-                time_t t_unix = (time_t)get_unix_from_epoch(current_epoch);
-                struct tm *tm_info = gmtime(&t_unix); 
-                if (tm_info) {
-                    sprintf(text_year, "%d", tm_info->tm_year + 1900);
-                    sprintf(text_month, "%d", tm_info->tm_mon + 1);
-                    sprintf(text_day, "%d", tm_info->tm_mday);
-                    sprintf(text_hour, "%d", tm_info->tm_hour);
-                    sprintf(text_min, "%d", tm_info->tm_min);
-                    sprintf(text_sec, "%d", tm_info->tm_sec);
-                }
-                sprintf(text_unix, "%ld", (long)t_unix);
-            }
-        }
-
-        if (GuiButton(btnPasses, "#208#")) {
-            show_passes_dialog = !show_passes_dialog;
-            if (show_passes_dialog && selected_sat) {
-                CalculatePasses(selected_sat, current_epoch);
-            }
-        }
-
-        // draw various popup windows (Help, Settings, Time, etc.)
-        if (show_help) {
-            Rectangle titleBar = { hw_x, hw_y, helpWindow.width, 24 * cfg.ui_scale }; 
-            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), titleBar)) {
-                drag_help = true;
-                drag_help_off = Vector2Subtract(GetMousePosition(), (Vector2){hw_x, hw_y});
-            }
-            if (drag_help) {
-                hw_x = GetMousePosition().x - drag_help_off.x;
-                hw_y = GetMousePosition().y - drag_help_off.y;
-                if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) drag_help = false;
-            }
-            
-            if (GuiWindowBox(helpWindow, "Help & Controls")) show_help = false;
-            
-            DrawUIText(is_2d_view ? "Controls: RMB to pan, Scroll to zoom. 'M' switches to 3D. Space: Pause." : "Controls: RMB to orbit, Shift+RMB to pan. 'M' switches to 2D. Space: Pause.", hw_x + 10*cfg.ui_scale, hw_y + 35*cfg.ui_scale, 16*cfg.ui_scale, cfg.text_secondary);
-            DrawUIText("Time: '.' (Faster 2x), ',' (Slower 0.5x), '/' (1x Speed), 'Shift+/' (Reset)", hw_x + 10*cfg.ui_scale, hw_y + 65*cfg.ui_scale, 16*cfg.ui_scale, cfg.text_secondary);
-            DrawUIText(TextFormat("UI Scale: '-' / '+' (%.1fx)", cfg.ui_scale), hw_x + 10*cfg.ui_scale, hw_y + 95*cfg.ui_scale, 16*cfg.ui_scale, cfg.text_secondary);
-        }
-
-        if (show_settings) {
-            Rectangle titleBar = { sw_x, sw_y, settingsWindow.width, 24 * cfg.ui_scale };
-            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), titleBar)) {
-                drag_settings = true;
-                drag_settings_off = Vector2Subtract(GetMousePosition(), (Vector2){sw_x, sw_y});
-            }
-            if (drag_settings) {
-                sw_x = GetMousePosition().x - drag_settings_off.x;
-                sw_y = GetMousePosition().y - drag_settings_off.y;
-                if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) drag_settings = false;
-            }
-            
-            if (GuiWindowBox(settingsWindow, "Settings")) show_settings = false;
-            
-            Rectangle cbRec = { sw_x + 10 * cfg.ui_scale, sw_y + 40 * cfg.ui_scale, 20 * cfg.ui_scale, 20 * cfg.ui_scale };
-            GuiCheckBox(cbRec, "Hide Unselected", &hide_unselected);
-
-            Rectangle cbRec2 = { sw_x + 10 * cfg.ui_scale, sw_y + 70 * cfg.ui_scale, 20 * cfg.ui_scale, 20 * cfg.ui_scale };
-            GuiCheckBox(cbRec2, "Show Clouds", &cfg.show_clouds);
-
-            Rectangle cbRec3 = { sw_x + 10 * cfg.ui_scale, sw_y + 100 * cfg.ui_scale, 20 * cfg.ui_scale, 20 * cfg.ui_scale };
-            GuiCheckBox(cbRec3, "Night Lights", &cfg.show_night_lights);
-        }
-
-        if (show_time_dialog) {
-            if (IsKeyPressed(KEY_TAB)) {
-                if (edit_year) { edit_year = false; edit_month = true; }
-                else if (edit_month) { edit_month = false; edit_day = true; }
-                else if (edit_day) { edit_day = false; edit_hour = true; }
-                else if (edit_hour) { edit_hour = false; edit_min = true; }
-                else if (edit_min) { edit_min = false; edit_sec = true; }
-                else if (edit_sec) { edit_sec = false; edit_unix = true; }
-                else if (edit_unix) { edit_unix = false; edit_year = true; }
-                else { edit_year = true; } 
-            }
-            Rectangle titleBar = { td_x, td_y, timeWindow.width, 24 * cfg.ui_scale };
-            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), titleBar)) {
-                drag_time_dialog = true;
-                drag_time_off = Vector2Subtract(GetMousePosition(), (Vector2){td_x, td_y});
-            }
-            if (drag_time_dialog) {
-                td_x = GetMousePosition().x - drag_time_off.x;
-                td_y = GetMousePosition().y - drag_time_off.y;
-                if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) drag_time_dialog = false;
-            }
-
-            if (GuiWindowBox(timeWindow, "Set Date & Time (UTC)")) show_time_dialog = false;
-
-            GuiLabel((Rectangle){ td_x + 20*cfg.ui_scale, td_y + 45*cfg.ui_scale, 100*cfg.ui_scale, 28*cfg.ui_scale }, "Date (Y-M-D):");
-            if (GuiTextBox((Rectangle){ td_x + 130*cfg.ui_scale, td_y + 45*cfg.ui_scale, 70*cfg.ui_scale, 32*cfg.ui_scale }, text_year, 8, edit_year)) edit_year = !edit_year;
-            if (GuiTextBox((Rectangle){ td_x + 210*cfg.ui_scale, td_y + 45*cfg.ui_scale, 50*cfg.ui_scale, 32*cfg.ui_scale }, text_month, 4, edit_month)) edit_month = !edit_month;
-            if (GuiTextBox((Rectangle){ td_x + 270*cfg.ui_scale, td_y + 45*cfg.ui_scale, 50*cfg.ui_scale, 32*cfg.ui_scale }, text_day, 4, edit_day)) edit_day = !edit_day;
-
-            GuiLabel((Rectangle){ td_x + 20*cfg.ui_scale, td_y + 90*cfg.ui_scale, 100*cfg.ui_scale, 28*cfg.ui_scale }, "Time (H:M:S):");
-            if (GuiTextBox((Rectangle){ td_x + 130*cfg.ui_scale, td_y + 90*cfg.ui_scale, 50*cfg.ui_scale, 32*cfg.ui_scale }, text_hour, 4, edit_hour)) edit_hour = !edit_hour;
-            if (GuiTextBox((Rectangle){ td_x + 190*cfg.ui_scale, td_y + 90*cfg.ui_scale, 50*cfg.ui_scale, 32*cfg.ui_scale }, text_min, 4, edit_min)) edit_min = !edit_min;
-            if (GuiTextBox((Rectangle){ td_x + 250*cfg.ui_scale, td_y + 90*cfg.ui_scale, 50*cfg.ui_scale, 32*cfg.ui_scale }, text_sec, 4, edit_sec)) edit_sec = !edit_sec;
-
-            if (GuiButton((Rectangle){ td_x + 340*cfg.ui_scale, td_y + 45*cfg.ui_scale, 160*cfg.ui_scale, 77*cfg.ui_scale }, "Apply Date/Time")) {
-                is_auto_warping = false;
-                struct tm t = {0};
-                t.tm_year = atoi(text_year) - 1900;
-                t.tm_mon = atoi(text_month) - 1;
-                t.tm_mday = atoi(text_day);
-                t.tm_hour = atoi(text_hour);
-                t.tm_min = atoi(text_min);
-                t.tm_sec = atoi(text_sec);
-
-                #ifdef _WIN32
-                    time_t unix_time = _mkgmtime(&t);
-                #else
-                    time_t unix_time = timegm(&t);
-                #endif
-
-                if (unix_time != -1) {
-                    current_epoch = unix_to_epoch((double)unix_time);
-                }
-                show_time_dialog = false;
-            }
-
-            DrawLine(td_x + 20*cfg.ui_scale, td_y + 145*cfg.ui_scale, td_x + 500*cfg.ui_scale, td_y + 145*cfg.ui_scale, cfg.ui_secondary);
-
-            GuiLabel((Rectangle){ td_x + 20*cfg.ui_scale, td_y + 165*cfg.ui_scale, 150*cfg.ui_scale, 28*cfg.ui_scale }, "Unix Epoch:");
-            if (GuiTextBox((Rectangle){ td_x + 170*cfg.ui_scale, td_y + 165*cfg.ui_scale, 160*cfg.ui_scale, 32*cfg.ui_scale }, text_unix, 64, edit_unix)) edit_unix = !edit_unix;
-
-            if (GuiButton((Rectangle){ td_x + 340*cfg.ui_scale, td_y + 165*cfg.ui_scale, 160*cfg.ui_scale, 32*cfg.ui_scale }, "Apply Epoch")) {
-                is_auto_warping = false;
-                double ep;
-                if (sscanf(text_unix, "%lf", &ep) == 1) current_epoch = unix_to_epoch(ep);
-                show_time_dialog = false;
-            }
-        }
-
-        if (show_passes_dialog) {
-            Rectangle titleBar = { pd_x, pd_y, passesWindow.width, 30 * cfg.ui_scale };
-            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), titleBar)) {
-                drag_passes = true;
-                drag_passes_off = Vector2Subtract(GetMousePosition(), (Vector2){pd_x, pd_y});
-            }
-            if (drag_passes) {
-                pd_x = GetMousePosition().x - drag_passes_off.x;
-                pd_y = GetMousePosition().y - drag_passes_off.y;
-                if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) drag_passes = false;
-            }
-
-            if (GuiWindowBox(passesWindow, "Upcoming Passes (Home Location)")) show_passes_dialog = false;
-
-            if (!selected_sat) {
-                DrawUIText("Select a satellite.", pd_x + 20*cfg.ui_scale, pd_y + 40*cfg.ui_scale, 16*cfg.ui_scale, cfg.text_main);
-            } else if (num_passes == 0) {
-                DrawUIText("No passes in the next 3 days.", pd_x + 20*cfg.ui_scale, pd_y + 40*cfg.ui_scale, 16*cfg.ui_scale, cfg.text_main);
-            } else {
-                for (int i = 0; i < num_passes; i++) {
-                    Rectangle row = { pd_x + 10*cfg.ui_scale, pd_y + (40 + i*55)*cfg.ui_scale, passesWindow.width - 20*cfg.ui_scale, 45*cfg.ui_scale };
-                    Rectangle rowBtn = { row.x, row.y, row.width - 40*cfg.ui_scale, row.height };
-                    Rectangle jumpBtn = { row.x + row.width - 35*cfg.ui_scale, row.y, 35*cfg.ui_scale, row.height };
-                    
-                    if (GuiButton(rowBtn, "")) {
-                        show_polar_dialog = true;
-                        selected_pass_idx = i;
-                    }
-
-                    if (GuiButton(jumpBtn, "#134#")) {
-                        auto_warp_target = passes[i].aos_epoch;
-                        auto_warp_initial_diff = (auto_warp_target - current_epoch) * 86400.0;
-                        if (auto_warp_initial_diff > 0.0) {
-                            is_auto_warping = true;
-                            show_polar_dialog = true;
-                            selected_pass_idx = 0; 
+                    if (Vector3DotProduct(normal, viewDir) > 0.0f && Vector3DotProduct(toTarget, camForward) > 0.0f) {
+                        Vector2 sp = GetWorldToScreen(m_pos, Camera3DParams);
+                        DrawTexturePro(markerIcon, (Rectangle){0,0,markerIcon.width,markerIcon.height}, 
+                            (Rectangle){sp.x, sp.y, m_size_3d, m_size_3d}, (Vector2){m_size_3d/2.f, m_size_3d/2.f}, 0.0f, WHITE);
+                        
+                        if (camDistance < 50.0f) {
+                            DrawUIText(customFont, markers[m].name, sp.x+(m_size_3d/2.f)+4.f, sp.y-(m_size_3d/2.f), m_text_3d, WHITE);
                         }
                     }
-                    
-                    char aos_str[16], los_str[16];
-                    epoch_to_time_str(passes[i].aos_epoch, aos_str);
-                    epoch_to_time_str(passes[i].los_epoch, los_str);
-                    
-                    char aos_info[32], los_info[32], max_info[32];
-                    sprintf(aos_info, "#121# %s", aos_str);
-                    sprintf(los_info, "#120# %s", los_str);
-                    sprintf(max_info, "Max: %.1fdeg", passes[i].max_el);
-                    
-                    GuiSetStyle(LABEL, TEXT_COLOR_NORMAL, ColorToInt(cfg.text_main));
-                    
-                    float lx = row.x + 10 * cfg.ui_scale;
-                    float ly = row.y + 12 * cfg.ui_scale;
-                    float lh = 20 * cfg.ui_scale;
-                    
-                    GuiLabel((Rectangle){ lx, ly, 120 * cfg.ui_scale, lh }, aos_info);
-                    GuiLabel((Rectangle){ lx + 130 * cfg.ui_scale, ly, 120 * cfg.ui_scale, lh }, los_info);
-                    GuiLabel((Rectangle){ lx + 260 * cfg.ui_scale, ly, 120 * cfg.ui_scale, lh }, max_info);
-
-                    if (current_epoch >= passes[i].aos_epoch && current_epoch <= passes[i].los_epoch) {
-                        float prog = (current_epoch - passes[i].aos_epoch) / (passes[i].los_epoch - passes[i].aos_epoch);
-                        Rectangle pb_bg = { rowBtn.x + 10*cfg.ui_scale, rowBtn.y + 35*cfg.ui_scale, rowBtn.width - 20*cfg.ui_scale, 4*cfg.ui_scale };
-                        Rectangle pb_fg = { pb_bg.x, pb_bg.y, pb_bg.width * prog, pb_bg.height };
-                        DrawRectangleRec(pb_bg, cfg.ui_secondary);
-                        DrawRectangleRec(pb_fg, cfg.ui_accent);
-                    }
                 }
             }
         }
 
-        if (show_polar_dialog) {
-            Rectangle titleBar = { pl_x, pl_y, polarWindow.width, 24 * cfg.ui_scale };
-            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), titleBar)) {
-                drag_polar = true;
-                drag_polar_off = Vector2Subtract(GetMousePosition(), (Vector2){pl_x, pl_y});
-            }
-            if (drag_polar) {
-                pl_x = GetMousePosition().x - drag_polar_off.x;
-                pl_y = GetMousePosition().y - drag_polar_off.y;
-                if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) drag_polar = false;
-            }
-
-            if (GuiWindowBox(polarWindow, "Polar Tracking Plot")) show_polar_dialog = false;
-
-            if (selected_pass_idx >= 0 && selected_pass_idx < num_passes && selected_sat) {
-                SatPass* p = &passes[selected_pass_idx];
-                float cx = pl_x + polarWindow.width/2;
-                float cy = pl_y + 160 * cfg.ui_scale;
-                float r_max = 100 * cfg.ui_scale;
-
-                // draw background grid for polar plot
-                DrawCircleLines(cx, cy, r_max, cfg.ui_secondary); 
-                DrawCircleLines(cx, cy, r_max * 0.666f, cfg.ui_secondary); 
-                DrawCircleLines(cx, cy, r_max * 0.333f, cfg.ui_secondary); 
-                DrawLine(cx - r_max, cy, cx + r_max, cy, cfg.ui_secondary);
-                DrawLine(cx, cy - r_max, cx, cy + r_max, cfg.ui_secondary);
-                
-                DrawUIText("N", cx - 5*cfg.ui_scale, cy - r_max - 20*cfg.ui_scale, 16*cfg.ui_scale, cfg.text_secondary);
-                DrawUIText("E", cx + r_max + 5*cfg.ui_scale, cy - 8*cfg.ui_scale, 16*cfg.ui_scale, cfg.text_secondary);
-                DrawUIText("S", cx - 5*cfg.ui_scale, cy + r_max + 5*cfg.ui_scale, 16*cfg.ui_scale, cfg.text_secondary);
-                DrawUIText("W", cx - r_max - 20*cfg.ui_scale, cy - 8*cfg.ui_scale, 16*cfg.ui_scale, cfg.text_secondary);
-
-                // draw the predicted path line
-                for (int k = 0; k < p->num_pts - 1; k++) {
-                    float az1 = p->path_pts[k].x, el1 = p->path_pts[k].y;
-                    float az2 = p->path_pts[k+1].x, el2 = p->path_pts[k+1].y;
-                    float r1 = r_max * (90 - el1)/90.0f;
-                    float r2 = r_max * (90 - el2)/90.0f;
-                    Vector2 pt1 = { cx + r1 * sin(az1*DEG2RAD), cy - r1 * cos(az1*DEG2RAD) };
-                    Vector2 pt2 = { cx + r2 * sin(az2*DEG2RAD), cy - r2 * cos(az2*DEG2RAD) };
-                    DrawLineEx(pt1, pt2, 2.0f, cfg.ui_accent);
-                }
-
-                if (current_epoch >= p->aos_epoch && current_epoch <= p->los_epoch) {
-                    double t_unix = get_unix_from_epoch(current_epoch);
-                    double gmst = epoch_to_gmst(current_epoch);
-                    double c_az, c_el;
-                    get_az_el(calculate_position(selected_sat, t_unix), gmst, home_location.lat, home_location.lon, home_location.alt, &c_az, &c_el);
-                    
-                    float r_c = r_max * (90 - c_el)/90.0f;
-                    Vector2 pt_c = { cx + r_c * sin(c_az*DEG2RAD), cy - r_c * cos(c_az*DEG2RAD) };
-                    DrawCircleV(pt_c, 4.0f*cfg.ui_scale, RED);
-
-                    char c_info[128];
-                    sprintf(c_info, "Az: %05.1f deg  El: %04.1f deg", c_az, c_el);
-                    DrawUIText(c_info, pl_x + 20*cfg.ui_scale, pl_y + 290*cfg.ui_scale, 18*cfg.ui_scale, cfg.text_main);
-
-                    int sec_till_los = (int)((p->los_epoch - current_epoch)*86400.0);
-                    char tl_info[64];
-                    sprintf(tl_info, "LOS in: %02d:%02d", sec_till_los/60, sec_till_los%60);
-                    DrawUIText(tl_info, pl_x + 20*cfg.ui_scale, pl_y + 315*cfg.ui_scale, 16*cfg.ui_scale, cfg.ui_accent);
-                } else if (current_epoch < p->aos_epoch) {
-                    int sec_till_aos = (int)((p->aos_epoch - current_epoch)*86400.0);
-                    char tl_info[64];
-                    sprintf(tl_info, "AOS in: %02d:%02d:%02d", sec_till_aos/3600, (sec_till_aos%3600)/60, sec_till_aos%60);
-                    DrawUIText(tl_info, pl_x + 20*cfg.ui_scale, pl_y + 295*cfg.ui_scale, 16*cfg.ui_scale, cfg.text_secondary);
-                } else {
-                    DrawUIText("Pass Complete", pl_x + 20*cfg.ui_scale, pl_y + 295*cfg.ui_scale, 16*cfg.ui_scale, cfg.text_secondary);
-                }
-
-                // add doppler button right below the tracking info
-                if (GuiButton((Rectangle){ pl_x + 20*cfg.ui_scale, pl_y + 345*cfg.ui_scale, 260*cfg.ui_scale, 30*cfg.ui_scale }, "#125# Doppler Shift Analysis")) {
-                    show_doppler_dialog = true;
-                    doppler_pass_idx = selected_pass_idx;
-                }
-            } else {
-                DrawUIText("No valid pass selected.", pl_x + 20*cfg.ui_scale, pl_y + 40*cfg.ui_scale, 16*cfg.ui_scale, cfg.text_main);
-            }
-        }
-
-        if (show_doppler_dialog) {
-            if (IsKeyPressed(KEY_TAB)) {
-                if (edit_doppler_freq) { edit_doppler_freq = false; edit_doppler_res = true; }
-                else if (edit_doppler_res) { edit_doppler_res = false; edit_doppler_file = true; }
-                else if (edit_doppler_file) { edit_doppler_file = false; edit_doppler_freq = true; }
-                else { edit_doppler_freq = true; } 
-            }
-
-            Rectangle titleBar = { dop_x, dop_y, dopplerWindow.width, 24 * cfg.ui_scale };
-            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), titleBar)) {
-                drag_doppler = true;
-                drag_doppler_off = Vector2Subtract(GetMousePosition(), (Vector2){dop_x, dop_y});
-            }
-            if (drag_doppler) {
-                dop_x = GetMousePosition().x - drag_doppler_off.x;
-                dop_y = GetMousePosition().y - drag_doppler_off.y;
-                if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) drag_doppler = false;
-            }
-
-            if (GuiWindowBox(dopplerWindow, "Doppler Shift Analysis")) show_doppler_dialog = false;
-
-            if (doppler_pass_idx >= 0 && doppler_pass_idx < num_passes && selected_sat) {
-                SatPass* p = &passes[doppler_pass_idx];
-
-                GuiLabel((Rectangle){ dop_x + 20*cfg.ui_scale, dop_y + 40*cfg.ui_scale, 100*cfg.ui_scale, 28*cfg.ui_scale }, "Freq (Hz):");
-                if (GuiTextBox((Rectangle){ dop_x + 120*cfg.ui_scale, dop_y + 40*cfg.ui_scale, 120*cfg.ui_scale, 28*cfg.ui_scale }, text_doppler_freq, 32, edit_doppler_freq)) edit_doppler_freq = !edit_doppler_freq;
-
-                GuiLabel((Rectangle){ dop_x + 260*cfg.ui_scale, dop_y + 40*cfg.ui_scale, 90*cfg.ui_scale, 28*cfg.ui_scale }, "csv res:");
-                if (GuiTextBox((Rectangle){ dop_x + 350*cfg.ui_scale, dop_y + 40*cfg.ui_scale, 60*cfg.ui_scale, 28*cfg.ui_scale }, text_doppler_res, 32, edit_doppler_res)) edit_doppler_res = !edit_doppler_res;
-
-                GuiLabel((Rectangle){ dop_x + 20*cfg.ui_scale, dop_y + 80*cfg.ui_scale, 100*cfg.ui_scale, 28*cfg.ui_scale }, "Export:");
-                if (GuiTextBox((Rectangle){ dop_x + 120*cfg.ui_scale, dop_y + 80*cfg.ui_scale, 290*cfg.ui_scale, 28*cfg.ui_scale }, text_doppler_file, 128, edit_doppler_file)) edit_doppler_file = !edit_doppler_file;
-
-                if (GuiButton((Rectangle){ dop_x + 430*cfg.ui_scale, dop_y + 80*cfg.ui_scale, 120*cfg.ui_scale, 28*cfg.ui_scale }, "Export CSV")) {
-                    double base_freq = atof(text_doppler_freq);
-                    double res = atof(text_doppler_res);
-                    if (res <= 0.0) res = 1.0;
-                    double pass_dur = (p->los_epoch - p->aos_epoch) * 86400.0;
-                    
-                    FILE* fp = fopen(text_doppler_file, "w");
-                    if (fp) {
-                        fprintf(fp, "Time(s),Frequency(Hz)\n");
-                        int num_samples = (int)(pass_dur * res);
-                        for (int k = 0; k <= num_samples; k++) {
-                            double t_sec = k / res;
-                            double ep = p->aos_epoch + t_sec / 86400.0;
-                            double f = calculate_doppler_freq(selected_sat, ep, home_location, base_freq);
-                            fprintf(fp, "%.3f,%.3f\n", t_sec, f);
-                        }
-                        fclose(fp);
-                    }
-                }
-
-                double base_freq = atof(text_doppler_freq);
-                double pass_dur = (p->los_epoch - p->aos_epoch) * 86400.0;
-                
-                if (pass_dur > 0 && base_freq > 0) {
-                    float graph_x = dop_x + 90 * cfg.ui_scale;
-                    float graph_y = dop_y + 130 * cfg.ui_scale;
-                    float graph_w = dopplerWindow.width - 110 * cfg.ui_scale;
-                    float graph_h = dopplerWindow.height - 160 * cfg.ui_scale;
-                    
-                    DrawRectangleLines(graph_x, graph_y, graph_w, graph_h, cfg.ui_secondary);
-
-                    // sample the pass to find min/max bounds for scaling
-                    double min_f = base_freq * 2.0; 
-                    double max_f = 0.0;
-                    int plot_pts = (int)graph_w; 
-                    for (int k = 0; k <= plot_pts; k++) {
-                        double t = p->aos_epoch + (k / (double)plot_pts) * (pass_dur / 86400.0);
-                        double f = calculate_doppler_freq(selected_sat, t, home_location, base_freq);
-                        if (f < min_f) min_f = f;
-                        if (f > max_f) max_f = f;
-                    }
-
-                    // 10% inner padding
-                    double f_pad = (max_f - min_f) * 0.1;
-                    if (f_pad < 1.0) f_pad = 1.0; 
-                    min_f -= f_pad;
-                    max_f += f_pad;
-                    
-                    // draw axis text
-                    DrawUIText(TextFormat("%.0f Hz", max_f), dop_x + 30*cfg.ui_scale, graph_y, 14*cfg.ui_scale, cfg.text_main);
-                    DrawUIText(TextFormat("%.0f Hz", min_f), dop_x + 30*cfg.ui_scale, graph_y + graph_h - 14*cfg.ui_scale, 14*cfg.ui_scale, cfg.text_main);
-                    DrawUIText("0s", graph_x + 25*cfg.ui_scale, graph_y + graph_h + 5*cfg.ui_scale, 14*cfg.ui_scale, cfg.text_main);
-                    DrawUIText(TextFormat("%.0fs", pass_dur), graph_x + graph_w - 55*cfg.ui_scale, graph_y + graph_h + 5*cfg.ui_scale, 14*cfg.ui_scale, cfg.text_main);
-
-                    // scissor bounds to guarantee no graphical bleeding over the edges
-                    BeginScissorMode((int)graph_x, (int)graph_y, (int)graph_w, (int)graph_h);
-                    Vector2 prev_pt = {0};
-                    for (int k = 0; k <= plot_pts; k++) {
-                        double t = p->aos_epoch + (k / (double)plot_pts) * (pass_dur / 86400.0);
-                        double f = calculate_doppler_freq(selected_sat, t, home_location, base_freq);
-                        
-                        float px = graph_x + k;
-                        float py = graph_y + graph_h - (float)((f - min_f) / (max_f - min_f)) * graph_h;
-                        
-                        if (k > 0) DrawLineEx(prev_pt, (Vector2){px, py}, 2.0f, cfg.ui_accent);
-                        prev_pt = (Vector2){px, py};
-                    }
-                    EndScissorMode();
-                }
-            } else {
-                DrawUIText("No valid pass selected.", dop_x + 20*cfg.ui_scale, dop_y + 60*cfg.ui_scale, 16*cfg.ui_scale, cfg.text_main);
-            }
-        }
-
-        if (show_tle_warning) {
-            if (GuiWindowBox(tleWindow, "Warning")) show_tle_warning = false;
-
-            DrawUIText("Your TLEs are out of date.", tleWindow.x + 20*cfg.ui_scale, tleWindow.y + 45*cfg.ui_scale, 18*cfg.ui_scale, cfg.text_main);
-
-            if (GuiButton((Rectangle){tleWindow.x + 20*cfg.ui_scale, tleWindow.y + 80*cfg.ui_scale, 120*cfg.ui_scale, 30*cfg.ui_scale}, "Sync")) {
-                // Future functionality goes here
-            }
-            if (GuiButton((Rectangle){tleWindow.x + 160*cfg.ui_scale, tleWindow.y + 80*cfg.ui_scale, 120*cfg.ui_scale, 30*cfg.ui_scale}, "Ignore")) {
-                show_tle_warning = false;
-            }
-        }
-
-        // bottom right debug info
-        DrawUIText(TextFormat("%3i FPS", GetFPS()), GetScreenWidth() - (90*cfg.ui_scale), 10*cfg.ui_scale, 20*cfg.ui_scale, cfg.sat_selected);
-        DrawUIText(TextFormat("%i Sats", sat_count), GetScreenWidth() - (90*cfg.ui_scale), 34*cfg.ui_scale, 16*cfg.ui_scale, cfg.text_secondary);
+        /* ui overlay rendering */
+        UIContext uiCtx = {
+            .current_epoch = &current_epoch,
+            .time_multiplier = &time_multiplier,
+            .saved_multiplier = &saved_multiplier,
+            .is_auto_warping = &is_auto_warping,
+            .auto_warp_target = &auto_warp_target,
+            .auto_warp_initial_diff = &auto_warp_initial_diff,
+            .is_2d_view = &is_2d_view,
+            .hide_unselected = &hide_unselected,
+            .selected_sat = &selected_sat,
+            .hovered_sat = hovered_sat,
+            .active_sat = active_sat,
+            .active_lock = &active_lock,
+            .datetime_str = datetime_str,
+            .gmst_deg = gmst_deg,
+            .map_w = map_w,
+            .map_h = map_h,
+            .camera2d = &Camera2DParams,
+            .camera3d = &Camera3DParams
+        };
+        DrawGUI(&uiCtx, &cfg, customFont);
 
         EndDrawing();
     }
 
-    // unload all graphical resources
+    /* cleanup */
     UnloadTexture(logoTex);
     UnloadTexture(satIcon);
     UnloadTexture(markerIcon);

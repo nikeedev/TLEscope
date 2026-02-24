@@ -16,6 +16,7 @@
 #define DRAW_SCALE 3000.0f 
 
 #define ORBIT_CACHE_SIZE 91
+#define MAX_CUSTOM_TLE_SOURCES 20
 
 // keeps track of satellite data
 typedef struct {
@@ -35,6 +36,7 @@ typedef struct {
 
     Vector3 orbit_cache[ORBIT_CACHE_SIZE];
     bool orbit_cached;
+    bool is_active;
 } Satellite;
 
 typedef struct {
@@ -43,6 +45,12 @@ typedef struct {
     float lon;
     float alt;
 } Marker;
+
+typedef struct {
+    char name[64];
+    char url[256];
+    bool selected;
+} CustomTLESource;
 
 extern Satellite satellites[MAX_SATELLITES];
 extern int sat_count;
@@ -62,7 +70,12 @@ typedef struct {
     float orbits_to_draw;
     bool show_clouds;
     bool show_night_lights;
+    bool show_markers;
+    bool show_statistics;
     
+    CustomTLESource custom_tle_sources[MAX_CUSTOM_TLE_SOURCES];
+    int custom_tle_source_count;
+
     Color bg_color;
     Color orbit_normal;
     Color orbit_highlighted;

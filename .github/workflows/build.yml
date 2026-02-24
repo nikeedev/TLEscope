@@ -4,7 +4,7 @@ on:
   push:
     branches: [ "main", "master" ]
     tags:
-      - 'v*' # Triggers stable release on version tags
+      - 'v*'
     paths-ignore:
       - 'README.md'
       - 'ROADMAP.md'
@@ -26,11 +26,12 @@ jobs:
       - name: Install Linux Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc make libasound2-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev libglu1-mesa-dev libxcursor-dev libxinerama-dev libwayland-dev libxkbcommon-dev libcurl4-openssl-dev
+          sudo apt-get install -y gcc make libasound2-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev libglu1-mesa-dev libxcursor-dev libxinerama-dev libwayland-dev libxkbcommon-dev
 
-      - name: Compile Linux Binaries
+      - name: Compile and Bundle Linux
         run: make linux
 
+<<<<<<< HEAD
       - name: Bundle Linux Release
         run: |
           mkdir -p TLEscope-Linux
@@ -42,11 +43,13 @@ jobs:
           cp logo.png TLEscope-Linux/
           cp logo_l.png TLEscope-Linux/
 
+=======
+>>>>>>> e916dbf (Massive feature-rich rework and cleanup)
       - name: Upload Linux Artifact
         uses: actions/upload-artifact@v4
         with:
           name: TLEscope-Linux
-          path: TLEscope-Linux/
+          path: dist/TLEscope-Linux/
           retention-days: 14
 
   build-windows:
@@ -60,24 +63,12 @@ jobs:
       - name: Install MinGW (Windows Cross-Compiler)
         run: |
           sudo apt-get update
-          sudo apt-get install -y mingw-w64 unzip
+          sudo apt-get install -y mingw-w64
 
-      - name: Install Windows libcurl
-        run: |
-          wget -qO curl.zip "https://curl.se/windows/latest.cgi?p=win64-mingw.zip"
-          unzip -q curl.zip
-          
-          # Move headers and libs into the cross-compiler's default search paths
-          sudo cp -r curl-*-win64-mingw/include/curl /usr/x86_64-w64-mingw32/include/
-          sudo cp -r curl-*-win64-mingw/lib/* /usr/x86_64-w64-mingw32/lib/
-          
-          # Stage the required DLL so it gets bundled with the release
-          mkdir -p bin
-          cp curl-*-win64-mingw/bin/*.dll bin/
-
-      - name: Compile Windows Binaries
+      - name: Compile and Bundle Windows
         run: make windows
 
+<<<<<<< HEAD
       - name: Bundle Windows Release
         run: |
           mkdir -p TLEscope-Windows
@@ -90,11 +81,13 @@ jobs:
           cp logo.png TLEscope-Windows/
           cp logo_l.png TLEscope-Windows/
 
+=======
+>>>>>>> e916dbf (Massive feature-rich rework and cleanup)
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4
         with:
           name: TLEscope-Windows
-          path: TLEscope-Windows/
+          path: dist/TLEscope-Windows/
           retention-days: 14
 
   release:
@@ -115,9 +108,7 @@ jobs:
         run: |
           cd artifacts
           
-          # make executable
           chmod +x TLEscope-Linux/TLEscope
-          chmod +x TLEscope-Linux/fetch_tle
           
           zip -r ../TLEscope-Linux.zip TLEscope-Linux/
           zip -r ../TLEscope-Windows.zip TLEscope-Windows/

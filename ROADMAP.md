@@ -7,10 +7,11 @@
 - [x] button for doppler effect graphing of a given frequency with a csv export function of variable resolution
 - [ ] allow narrowing the area of interest; for example, only list passes that are in range and in the western side of the polar plot.
 ### TLE management
-- [ ] celestrak puller
+- [x] celestrak puller
 - [ ] spacetrack puller
-- [ ] satellites list with toggles
-- [ ] satellite search with a click to target feature
+- [x] custom source puller
+- [x] satellites list with toggles
+- [x] satellite search with a click to target feature
 
 ### Antenna helpers
 - [ ] antenna rotator support

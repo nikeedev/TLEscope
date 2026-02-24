@@ -2,6 +2,7 @@
 # Directories With Compiled Files
 bin/
 build/
+dist/
 
 # Dynamic Files With Dynamic Data or PIIs
 /date.tle

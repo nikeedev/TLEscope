@@ -3,8 +3,9 @@
 
 #include "types.h"
 
-#define MAX_PASSES 5
+#define MAX_PASSES 1000
 typedef struct {
+    Satellite* sat;
     double aos_epoch;
     double los_epoch;
     double max_el_epoch;
