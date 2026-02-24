@@ -1273,19 +1273,39 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
     Rectangle btnRecs[12] = { btnSet, btnHelp, btn2D3D, btnSatMgr, btnHideUnselected, btnPasses, btnTLEMgr, btnRewind, btnPlayPause, btnFastForward, btnNow, btnClock };
     const char* tt_texts[12] = { "Settings", "Help & Controls", "Toggle 2D/3D View", "Satellite Manager", "Toggle Unselected Orbits", "Pass Predictor", "TLE Manager", "Slower / Reverse", "Play / Pause", "Faster", "Real Time", "Set Date & Time" };
     
-    bool over_window = IsMouseOverUI(cfg); 
+    /* Evaluate window occlusion directly to avoid self-blocking buttons */
+    bool over_dialog = false;
+    if (show_help && CheckCollisionPointRec(GetMousePosition(), helpWindow)) over_dialog = true;
+    if (show_settings && CheckCollisionPointRec(GetMousePosition(), settingsWindow)) over_dialog = true;
+    if (show_time_dialog && CheckCollisionPointRec(GetMousePosition(), timeWindow)) over_dialog = true;
+    if (show_passes_dialog && CheckCollisionPointRec(GetMousePosition(), passesWindow)) over_dialog = true;
+    if (show_polar_dialog && CheckCollisionPointRec(GetMousePosition(), polarWindow)) over_dialog = true;
+    if (show_doppler_dialog && CheckCollisionPointRec(GetMousePosition(), dopplerWindow)) over_dialog = true;
+    if (show_sat_mgr_dialog && CheckCollisionPointRec(GetMousePosition(), smWindow)) over_dialog = true;
+    if (show_tle_mgr_dialog && CheckCollisionPointRec(GetMousePosition(), tmMgrWindow)) over_dialog = true;
+    if (show_tle_warning && CheckCollisionPointRec(GetMousePosition(), tleWindow)) over_dialog = true;
+
+    /* tooltips~~ */
     for (int i = 0; i < 12; i++) {
-        if (!over_window && CheckCollisionPointRec(GetMousePosition(), btnRecs[i])) {
+        if (!over_dialog && CheckCollisionPointRec(GetMousePosition(), btnRecs[i])) {
             tt_hover[i] += GetFrameTime();
-            if (tt_hover[i] > 0.45f) {
+            if (tt_hover[i] > 0.4f) {
                 Vector2 m = GetMousePosition();
                 float tw = MeasureTextEx(customFont, tt_texts[i], 14*cfg->ui_scale, 1.0f).x + 12*cfg->ui_scale;
-                DrawRectangle(m.x + 10*cfg->ui_scale, m.y + 15*cfg->ui_scale, tw, 24*cfg->ui_scale, ApplyAlpha(cfg->ui_bg, 0.95f));
-                DrawRectangleLines(m.x + 10*cfg->ui_scale, m.y + 15*cfg->ui_scale, tw, 24*cfg->ui_scale, cfg->ui_accent);
-                DrawUIText(customFont, tt_texts[i], m.x + 16*cfg->ui_scale, m.y + 19*cfg->ui_scale, 14*cfg->ui_scale, cfg->text_main);
+                
+                float tt_x = m.x + 10*cfg->ui_scale;
+                float tt_y = m.y + 15*cfg->ui_scale;
+                
+                /* Keep tooltip inside screen boundaries */
+                if (tt_x + tw > GetScreenWidth()) tt_x = GetScreenWidth() - tw - 5*cfg->ui_scale;
+                if (tt_y + 24*cfg->ui_scale > GetScreenHeight()) tt_y = m.y - 25*cfg->ui_scale;
+
+                DrawRectangle(tt_x, tt_y, tw, 24*cfg->ui_scale, ApplyAlpha(cfg->ui_bg, 0.6f));
+                DrawRectangleLines(tt_x, tt_y, tw, 24*cfg->ui_scale, cfg->ui_primary);
+                DrawUIText(customFont, tt_texts[i], tt_x + 6*cfg->ui_scale, tt_y + 4*cfg->ui_scale, 14*cfg->ui_scale, cfg->text_main);
             }
         } else {
-            tt_hover[i] = 0;
+            tt_hover[i] = 0.0f;
         }
     }
 
