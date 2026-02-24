@@ -36,7 +36,7 @@ TLEscope comes equipped with tools designed for RF engineers, satellite operator
 You can find the roadmap here: [ROADMAP.md](https://github.com/aweeri/TLEscope/blob/main/ROADMAP.md)
 
 ### **​Development & Contributions**
-​TLEscope is an evolving project with a rich roadmap. While TLE data importing is currently a very manual process, full integration is planned for future releases. We welcome bug reports, feature requests, and code contributions via the project's issue tracker.
+​TLEscope is an evolving project with a rich roadmap. We welcome bug reports, feature requests, and code contributions via the project's issue tracker.
 
 ### **Download**
 To download TLEscope, grab a portable zip from the [Relases tab](https://github.com/aweeri/TLEscope/releases), then extract it's contents into a directory of choice.
