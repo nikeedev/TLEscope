@@ -1289,7 +1289,7 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
     for (int i = 0; i < 12; i++) {
         if (!over_dialog && CheckCollisionPointRec(GetMousePosition(), btnRecs[i])) {
             tt_hover[i] += GetFrameTime();
-            if (tt_hover[i] > 0.4f) {
+            if (tt_hover[i] > 0.3f) {
                 Vector2 m = GetMousePosition();
                 float tw = MeasureTextEx(customFont, tt_texts[i], 14*cfg->ui_scale, 1.0f).x + 12*cfg->ui_scale;
                 
