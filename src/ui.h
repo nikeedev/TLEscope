@@ -17,6 +17,8 @@ typedef struct {
     double* auto_warp_initial_diff;
     bool* is_2d_view;
     bool* hide_unselected;
+    bool* picking_home;
+    bool* exit_app;
     Satellite** selected_sat;
     Satellite* hovered_sat;
     Satellite* active_sat;
@@ -30,6 +32,8 @@ typedef struct {
 } UIContext;
 
 /* core UI Methods */
+void SaveSatSelection(void);
+void LoadSatSelection(void);
 bool IsUITyping(void);
 void ToggleTLEWarning(void);
 bool IsMouseOverUI(AppConfig* cfg);

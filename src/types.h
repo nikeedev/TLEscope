@@ -72,6 +72,7 @@ typedef struct {
     bool show_night_lights;
     bool show_markers;
     bool show_statistics;
+    bool highlight_sunlit;
     
     CustomTLESource custom_tle_sources[MAX_CUSTOM_TLE_SOURCES];
     int custom_tle_source_count;

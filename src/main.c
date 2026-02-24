@@ -73,7 +73,7 @@ const char* fsCloud3D =
 static AppConfig cfg = {
     .window_width = 1280, .window_height = 720, .target_fps = 120, .ui_scale = 1.0f,
     .show_clouds = false, .show_night_lights = true, .show_markers = true,
-    .show_statistics = false,
+    .show_statistics = false, .highlight_sunlit = false,
     .bg_color = {0, 0, 0, 255}, .text_main = {255, 255, 255, 255}, .theme = "default",
     .ui_primary = {32, 32, 32, 255}, .ui_secondary = {64, 64, 64, 255}, .ui_accent = {0, 255, 0, 255}
 };
@@ -142,18 +142,27 @@ static void draw_orbit_3d(Satellite* sat, double current_epoch, bool is_highligh
 
     if (is_highlighted) {
         Vector3 prev_pos = {0};
-        int segments = fmin(4000, fmax(90, (int)(400 * cfg.orbits_to_draw)));
-        double orbits_count = (double)cfg.orbits_to_draw;
-        
+        // *** CHANGE: always use 1 orbit in 3D ***
+        double orbits_count = 1.0;   // was cfg.orbits_to_draw
+        int segments = fmin(4000, fmax(90, (int)(400 * orbits_count)));
         double period_days = (2.0 * PI / sat->mean_motion) / 86400.0;
         double time_step = (period_days * orbits_count) / segments;
 
         for (int i = 0; i <= segments; i++) {
             double t = current_epoch + (i * time_step);
             double t_unix = get_unix_from_epoch(t);
-            Vector3 pos = Vector3Scale(calculate_position(sat, t_unix), 1.0f / DRAW_SCALE);
+            Vector3 raw_pos = calculate_position(sat, t_unix);
+            Vector3 pos = Vector3Scale(raw_pos, 1.0f / DRAW_SCALE);
 
-            if (i > 0) DrawLine3D(prev_pos, pos, orbitColor);
+            if (i > 0) {
+                Color drawCol = orbitColor;
+                if (cfg.highlight_sunlit) {
+                    Vector3 sun_dir = Vector3Normalize(calculate_sun_position(t));
+                    if (!is_sat_eclipsed(raw_pos, sun_dir)) drawCol = ApplyAlpha(cfg.sat_highlighted, alpha);
+                    else drawCol = ApplyAlpha(cfg.orbit_normal, alpha);
+                }
+                DrawLine3D(prev_pos, pos, drawCol);
+            }
             prev_pos = pos;
         }
     } else {
@@ -200,6 +209,45 @@ static void DrawLoadingScreen(float progress, const char* message, Texture2D log
     
     EndDrawing();
 }
+
+static bool GetMouseEarthIntersection(Vector2 mouse, bool is_2d, Camera2D cam2d, Camera3D cam3d, double gmst_deg, float earth_offset, float map_w, float map_h, float* out_lat, float* out_lon) {
+    if (is_2d) {
+        Vector2 world = GetScreenToWorld2D(mouse, cam2d);
+        float mx = world.x;
+        float my = world.y;
+        // Wrap x to [-map_w/2, map_w/2)
+        mx = fmodf(mx + map_w/2, map_w);
+        if (mx < 0) mx += map_w;
+        mx -= map_w/2;
+        if (my < -map_h/2 || my > map_h/2) return false;
+        *out_lat = -(my / map_h) * 180.0f;
+        *out_lon = (mx / map_w) * 360.0f;
+        if (*out_lon > 180) *out_lon -= 360;
+        else if (*out_lon < -180) *out_lon += 360;
+        return true;
+    } else {
+        Ray ray = GetMouseRay(mouse, cam3d);
+        float earthRadius = EARTH_RADIUS_KM / DRAW_SCALE;
+        RayCollision col = GetRayCollisionSphere(ray, (Vector3){0,0,0}, earthRadius);
+        if (col.hit) {
+            Vector3 point = col.point;
+            float r = Vector3Length(point);
+            if (r < 0.001f) return false;
+            point = Vector3Scale(point, 1.0f/r);
+            float lat = asinf(point.y) * RAD2DEG;
+            float lon_ecef = atan2f(-point.z, point.x) * RAD2DEG;
+            float lon = lon_ecef - (gmst_deg + earth_offset);
+            while (lon > 180) lon -= 360;
+            while (lon < -180) lon += 360;
+            *out_lat = lat;
+            *out_lon = lon;
+            return true;
+        }
+        return false;
+    }
+}
+
+static bool GetMouseEarthIntersection(Vector2 mouse, bool is_2d, Camera2D cam2d, Camera3D cam3d, double gmst_deg, float earth_offset, float map_w, float map_h, float* out_lat, float* out_lon);
 
 int main(void) {
     LoadAppConfig("settings.json", &cfg);
@@ -249,6 +297,7 @@ int main(void) {
     /* resource loading phase */
     DrawLoadingScreen(0.1f, "Fetching TLE Data...", logoLTex);
     load_tle_data("data.tle");
+    LoadSatSelection(); // restore active satellites
 
     DrawLoadingScreen(0.25f, "Initializing Textures...", logoTex);
     earthTexture = LoadTexture(TextFormat("themes/%s/earth.png", cfg.theme));
@@ -317,7 +366,7 @@ int main(void) {
     Vector2 target_camera2d_target = Camera2DParams.target;
 
     float map_w = 2048.0f, map_h = 1024.0f;
-    float camDistance = 35.0f, camAngleX = 0.785f, camAngleY = 0.5f;
+    float camDistance = 10.0f, camAngleX = 0.785f, camAngleY = 0.5f;
 
     float target_camDistance = camDistance;
     float target_camAngleX = camAngleX;
@@ -332,9 +381,11 @@ int main(void) {
     bool hide_unselected = false;
     float unselected_fade = 1.0f;
 
+    bool picking_home = false;
     bool is_auto_warping = false;
     double auto_warp_target = 0.0;
     double auto_warp_initial_diff = 0.0;
+    bool exit_app = false;
 
     Satellite* hovered_sat = NULL;
     Satellite* selected_sat = NULL;
@@ -345,7 +396,7 @@ int main(void) {
     int current_update_idx = 0;
 
     /* main loop */
-    while (!WindowShouldClose()) {
+    while (!WindowShouldClose() && !exit_app) {
         bool is_typing = IsUITyping();
         bool over_ui = IsMouseOverUI(&cfg);
 
@@ -540,34 +591,45 @@ int main(void) {
         /* selection and double click for planet locking */
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             if (!over_ui) {
-                selected_sat = hovered_sat; 
-
-                double current_time = GetTime();
-                if (current_time - last_left_click_time < 0.3) {
-                    if (is_2d_view) {
-                        Vector2 mouseWorld = GetScreenToWorld2D(GetMousePosition(), Camera2DParams);
-                        bool hit_moon = false;
-                        for (int offset_i = -1; offset_i <= 1; offset_i++) {
-                            float x_off = offset_i * map_w;
-                            if (Vector2Distance(mouseWorld, (Vector2){moon_mx + x_off, moon_my}) < (15.0f * cfg.ui_scale / Camera2DParams.zoom)) {
-                                hit_moon = true;
-                                break;
+                if (picking_home) {
+                    float lat, lon;
+                    if (GetMouseEarthIntersection(GetMousePosition(), is_2d_view, Camera2DParams, Camera3DParams, gmst_deg, cfg.earth_rotation_offset, map_w, map_h, &lat, &lon)) {
+                        home_location.lat = lat;
+                        home_location.lon = lon;
+                        home_location.alt = 0.0f;
+                        picking_home = false;   // exit pick mode after successful set
+                    }
+                    // if click is not on earth, do nothing
+                } else {
+                    // normal satellite selection
+                    selected_sat = hovered_sat;
+                    double current_time = GetTime();
+                    if (current_time - last_left_click_time < 0.3) {
+                        // double‑click lock logic (unchanged)
+                        if (is_2d_view) {
+                            Vector2 mouseWorld = GetScreenToWorld2D(GetMousePosition(), Camera2DParams);
+                            bool hit_moon = false;
+                            for (int offset_i = -1; offset_i <= 1; offset_i++) {
+                                float x_off = offset_i * map_w;
+                                if (Vector2Distance(mouseWorld, (Vector2){moon_mx + x_off, moon_my}) < (15.0f * cfg.ui_scale / Camera2DParams.zoom)) {
+                                    hit_moon = true;
+                                    break;
+                                }
+                            }
+                            active_lock = hit_moon ? LOCK_MOON : LOCK_EARTH;
+                        } else {
+                            Ray mouseRay = GetMouseRay(GetMousePosition(), Camera3DParams);
+                            RayCollision earthCol = GetRayCollisionSphere(mouseRay, Vector3Zero(), draw_earth_radius);
+                            RayCollision moonCol = GetRayCollisionSphere(mouseRay, draw_moon_pos, draw_moon_radius);
+                            if (moonCol.hit && (!earthCol.hit || moonCol.distance < earthCol.distance)) {
+                                active_lock = LOCK_MOON;
+                            } else if (earthCol.hit) {
+                                active_lock = LOCK_EARTH;
                             }
                         }
-                        active_lock = hit_moon ? LOCK_MOON : LOCK_EARTH;
-                    } else {
-                        Ray mouseRay = GetMouseRay(GetMousePosition(), Camera3DParams);
-                        RayCollision earthCol = GetRayCollisionSphere(mouseRay, Vector3Zero(), draw_earth_radius);
-                        RayCollision moonCol = GetRayCollisionSphere(mouseRay, draw_moon_pos, draw_moon_radius);
-
-                        if (moonCol.hit && (!earthCol.hit || moonCol.distance < earthCol.distance)) {
-                            active_lock = LOCK_MOON;
-                        } else if (earthCol.hit) {
-                            active_lock = LOCK_EARTH;
-                        }
                     }
+                    last_left_click_time = current_time;
                 }
-                last_left_click_time = current_time;
             }
         }
 
@@ -716,6 +778,7 @@ int main(void) {
                         if (is_hl) {
                             int segments = fmin(4000, fmax(50, (int)(400 * cfg.orbits_to_draw))); 
                             Vector2 track_pts[4001]; 
+                            bool is_sunlit_arr[4001];
 
                             double period_days = (2.0 * PI / satellites[i].mean_motion) / 86400.0;
                             double time_step = (period_days * cfg.orbits_to_draw) / segments;
@@ -723,14 +786,25 @@ int main(void) {
                             for (int j = 0; j <= segments; j++) {
                                 double t = current_epoch + (j * time_step);
                                 double t_unix = get_unix_from_epoch(t);
-                                get_map_coordinates(calculate_position(&satellites[i], t_unix), epoch_to_gmst(t), cfg.earth_rotation_offset, map_w, map_h, &track_pts[j].x, &track_pts[j].y);
+                                Vector3 raw_pos = calculate_position(&satellites[i], t_unix);
+                                get_map_coordinates(raw_pos, epoch_to_gmst(t), cfg.earth_rotation_offset, map_w, map_h, &track_pts[j].x, &track_pts[j].y);
+                                
+                                if (cfg.highlight_sunlit) {
+                                    Vector3 sun_dir = Vector3Normalize(calculate_sun_position(t));
+                                    is_sunlit_arr[j] = !is_sat_eclipsed(raw_pos, sun_dir);
+                                }
                             }
 
                             for (int offset_i = -1; offset_i <= 1; offset_i++) {
                                 float x_off = offset_i * map_w;
                                 for (int j = 1; j <= segments; j++) {
                                     if (fabs(track_pts[j].x - track_pts[j-1].x) < map_w * 0.6f) {
-                                        DrawLineEx((Vector2){track_pts[j-1].x+x_off, track_pts[j-1].y}, (Vector2){track_pts[j].x+x_off, track_pts[j].y}, 2.0f/Camera2DParams.zoom, ApplyAlpha(cfg.orbit_highlighted, sat_alpha));
+                                        Color drawCol = ApplyAlpha(cfg.orbit_highlighted, sat_alpha);
+                                        if (cfg.highlight_sunlit) {
+                                            if (is_sunlit_arr[j]) drawCol = ApplyAlpha(cfg.sat_highlighted, sat_alpha);
+                                            else drawCol = ApplyAlpha(cfg.orbit_normal, sat_alpha);
+                                        }
+                                        DrawLineEx((Vector2){track_pts[j-1].x+x_off, track_pts[j-1].y}, (Vector2){track_pts[j].x+x_off, track_pts[j].y}, 2.0f/Camera2DParams.zoom, drawCol);
                                     }
                                 }
 
@@ -784,6 +858,21 @@ int main(void) {
 
                     EndScissorMode();
                 }
+
+            if (picking_home) {
+                float lat, lon;
+                if (GetMouseEarthIntersection(GetMousePosition(), true, Camera2DParams, Camera3DParams, gmst_deg, cfg.earth_rotation_offset, map_w, map_h, &lat, &lon)) {
+                    float mx = (lon / 360.0f) * map_w;
+                    float my = -(lat / 180.0f) * map_h;
+                    for (int offset_i = -1; offset_i <= 1; offset_i++) {
+                        float x_off = offset_i * map_w;
+                        DrawTexturePro(markerIcon, (Rectangle){0,0,markerIcon.width,markerIcon.height},
+                            (Rectangle){mx + x_off, my, m_size_2d, m_size_2d},
+                            (Vector2){m_size_2d/2.f, m_size_2d/2.f}, 0.0f, (Color){0,255,255,255});
+                    }
+                }
+            }
+
             EndMode2D();
         } else {
             /* 3d globe rendering */
@@ -938,10 +1027,28 @@ int main(void) {
                     }
                 }
             }
+
+            if (picking_home) {
+                float lat, lon;
+                if (GetMouseEarthIntersection(GetMousePosition(), false, Camera2DParams, Camera3DParams, gmst_deg, cfg.earth_rotation_offset, map_w, map_h, &lat, &lon)) {
+                    float lon_rad = (lon + gmst_deg + cfg.earth_rotation_offset) * DEG2RAD;
+                    float lat_rad = lat * DEG2RAD;
+                    Vector3 pos = {
+                        cosf(lat_rad) * cosf(lon_rad) * draw_earth_radius,
+                        sinf(lat_rad) * draw_earth_radius,
+                        -cosf(lat_rad) * sinf(lon_rad) * draw_earth_radius
+                    };
+                    Vector2 sp = GetWorldToScreen(pos, Camera3DParams);
+                    DrawTexturePro(markerIcon, (Rectangle){0,0,markerIcon.width,markerIcon.height},
+                        (Rectangle){sp.x, sp.y, m_size_3d, m_size_3d},
+                        (Vector2){m_size_3d/2.f, m_size_3d/2.f}, 0.0f, (Color){0, 255, 255, 255});
+                }
+            }
         }
 
         /* ui overlay rendering */
         UIContext uiCtx = {
+            .exit_app = &exit_app,
             .current_epoch = &current_epoch,
             .time_multiplier = &time_multiplier,
             .saved_multiplier = &saved_multiplier,
@@ -950,6 +1057,7 @@ int main(void) {
             .auto_warp_initial_diff = &auto_warp_initial_diff,
             .is_2d_view = &is_2d_view,
             .hide_unselected = &hide_unselected,
+            .picking_home = &picking_home,
             .selected_sat = &selected_sat,
             .hovered_sat = hovered_sat,
             .active_sat = active_sat,
@@ -966,7 +1074,7 @@ int main(void) {
         EndDrawing();
     }
 
-    /* cleanup */
+    /* cleanup and save*/
     UnloadTexture(logoTex);
     UnloadTexture(satIcon);
     UnloadTexture(markerIcon);
@@ -983,6 +1091,9 @@ int main(void) {
     UnloadTexture(moonTexture);
     UnloadModel(moonModel);
     UnloadFont(customFont);
+
+    SaveSatSelection();
+
     CloseWindow();
     return 0;
 }

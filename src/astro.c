@@ -113,8 +113,22 @@ void load_tle_data(const char* filename) {
     if (!file) { printf("Failed to open %s\n", filename); return; }
 
     sat_count = 0;
+    char line0[256];
+    
+    /* Check for custom header to restore TLE Manager state */
+    if (fgets(line0, sizeof(line0), file)) {
+        if (strncmp(line0, "# EPOCH:", 8) == 0) {
+            unsigned int mask = 0, cust_mask = 0;
+            // scan past it, variables are unused here but keeps pointer advanced so ig whatever
+            if (strstr(line0, "CUST_MASK:")) {
+                sscanf(line0, "# EPOCH:%*d MASK:%u CUST_MASK:%u", &mask, &cust_mask);
+            }
+        } else {
+            rewind(file); // not a header, restart
+        }
+    }
 
-    char line0[256], line1[256], line2[256];
+    char line1[256], line2[256];
     while (fgets(line0, sizeof(line0), file)) {
         if (line0[0] == '#' || line0[0] == '\n' || line0[0] == '\r') continue;
 
@@ -446,6 +460,13 @@ Vector3 calculate_sun_position(double current_time_days) {
     pos.z = (float)(-y_eci);
 
     return Vector3Normalize(pos);
+}
+
+bool is_sat_eclipsed(Vector3 pos_km, Vector3 sun_dir_norm) {
+    float dot = Vector3DotProduct(pos_km, sun_dir_norm);
+    if (dot > 0.0f) return false;
+    float dist_sq = Vector3LengthSqr(pos_km) - (dot * dot);
+    return dist_sq < (EARTH_RADIUS_KM * EARTH_RADIUS_KM);
 }
 
 Vector3 calculate_moon_position(double current_time_days) {

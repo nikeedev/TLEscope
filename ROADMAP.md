@@ -12,7 +12,7 @@
 - [x] custom source puller
 - [x] satellites list with toggles
 - [x] satellite search with a click to target feature
-
+- [x] selection persistence across sessions
 ### Antenna helpers
 - [ ] antenna rotator support
 - [ ] satellite finder with a window showing satellites in view;

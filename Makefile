@@ -25,8 +25,7 @@ linux: bin/TLEscope
 	cp settings.json $(DIST_LINUX)/ 2>/dev/null || true 
 	cp data.tle $(DIST_LINUX)/ 2>/dev/null || true
 	cp logo*.png $(DIST_LINUX)/ 2>/dev/null || true
-	@echo "Linux build bundled in $(DIST_LINUX)/"
-	@echo "here's your command to run it you lazy ass ./$(DIST_LINUX)/TLEscope"
+	@echo "Linux build bundled in $(DIST_LINUX)/, do not run bin/*"
 
 windows: bin/TLEscope.exe
 	@mkdir -p $(DIST_WIN)
@@ -36,7 +35,7 @@ windows: bin/TLEscope.exe
 	cp settings.json $(DIST_WIN)/ 2>/dev/null || true
 	cp data.tle $(DIST_WIN)/ 2>/dev/null || true
 	cp logo*.png $(DIST_WIN)/ 2>/dev/null || true
-	@echo "Windows build bundled in $(DIST_WIN)/"
+	@echo "Windows build bundled in $(DIST_WIN)/, do not run bin/*"
 
 # yes makefile this data copied juuuuuuuust fine and is safe and sound don't worry about it :3 
 

@@ -54,6 +54,16 @@ static bool show_passes_dialog = false;
 static bool show_polar_dialog = false;
 static bool show_doppler_dialog = false;
 static bool show_tle_warning = false;
+static bool show_exit_dialog = false;
+
+static bool opened_once_settings = false;
+static bool opened_once_help = false;
+static bool opened_once_sat_mgr = false;
+static bool opened_once_tle_mgr = false;
+static bool opened_once_time = false;
+static bool opened_once_passes = false;
+static bool opened_once_polar = false;
+static bool opened_once_doppler = false;
 
 static bool show_sat_mgr_dialog = false;
 static bool drag_sat_mgr = false;
@@ -113,7 +123,14 @@ static bool edit_year = false, edit_month = false, edit_day = false;
 static bool edit_hour = false, edit_min = false, edit_sec = false;
 static bool edit_unix = false;
 
-static float tt_hover[12] = {0};
+static char text_hl_name[64] = "";
+static char text_hl_lat[32] = "";
+static char text_hl_lon[32] = "";
+static char text_hl_alt[32] = "";
+static bool edit_hl_name = false, edit_hl_lat = false, edit_hl_lon = false, edit_hl_alt = false;
+static float last_hl_lat = -999, last_hl_lon = -999, last_hl_alt = -999;
+
+static float tt_hover[13] = {0};
 static bool ui_initialized = false;
 
 /* shared helper functions */
@@ -197,12 +214,60 @@ static void SnapWindow(float *x, float *y, float w, float h, AppConfig* cfg) {
     if (fabsf((*y + h) - (sh - margin)) < threshold) *y = sh - margin - h;
 }
 
+/* find empty screen coordinates for newly spawned windows */
+static void FindSmartWindowPosition(float w, float h, AppConfig* cfg, float* out_x, float* out_y) {
+    float margin = 10.0f * cfg->ui_scale;
+    int sw = GetScreenWidth();
+    int sh = GetScreenHeight();
+
+    Rectangle active[10];
+    int count = 0;
+    if (show_help) active[count++] = (Rectangle){hw_x, hw_y, 900*cfg->ui_scale, 140*cfg->ui_scale};
+    if (show_settings) active[count++] = (Rectangle){sw_x, sw_y, 250*cfg->ui_scale, 440*cfg->ui_scale};
+    if (show_time_dialog) active[count++] = (Rectangle){td_x, td_y, 252*cfg->ui_scale, 320*cfg->ui_scale};
+    if (show_passes_dialog) active[count++] = (Rectangle){pd_x, pd_y, 357*cfg->ui_scale, 380*cfg->ui_scale};
+    if (show_polar_dialog) active[count++] = (Rectangle){pl_x, pl_y, 300*cfg->ui_scale, 430*cfg->ui_scale};
+    if (show_doppler_dialog) active[count++] = (Rectangle){dop_x, dop_y, 320*cfg->ui_scale, 480*cfg->ui_scale};
+    if (show_sat_mgr_dialog) active[count++] = (Rectangle){sm_x, sm_y, 400*cfg->ui_scale, 500*cfg->ui_scale};
+    if (show_tle_mgr_dialog) active[count++] = (Rectangle){tm_x, tm_y, 400*cfg->ui_scale, 500*cfg->ui_scale};
+
+    float candidates_x[] = { margin, sw - w - margin };
+    float step_y = 20.0f * cfg->ui_scale;
+
+    for (int i = 0; i < 2; i++) {
+        float test_x = candidates_x[i];
+        for (float test_y = margin; test_y <= sh - h - margin; test_y += step_y) {
+            Rectangle test_rect = { test_x - margin/2, test_y - margin/2, w + margin, h + margin };
+            bool collision = false;
+            for (int j = 0; j < count; j++) {
+                if (CheckCollisionRecs(test_rect, active[j])) {
+                    collision = true;
+                    break;
+                }
+            }
+            if (!collision) {
+                *out_x = test_x;
+                *out_y = test_y;
+                return;
+            }
+        }
+    }
+    
+    // fallback - cascade from top left if screen too crowded :ooo1
+    static float cascade = 0;
+    *out_x = 50 * cfg->ui_scale + cascade;
+    *out_y = 50 * cfg->ui_scale + cascade;
+    cascade += 20 * cfg->ui_scale;
+    if (cascade > 200 * cfg->ui_scale) cascade = 0;
+}
+
 /* ui system state checks */
 bool IsUITyping(void) {
     return edit_year || edit_month || edit_day || 
            edit_hour || edit_min || edit_sec || edit_unix ||
            edit_doppler_freq || edit_doppler_res || edit_doppler_file ||
-           edit_sat_search || edit_min_el;
+           edit_sat_search || edit_min_el ||
+           edit_hl_name || edit_hl_lat || edit_hl_lon || edit_hl_alt;
 }
 
 /* toggle out-of-date tle notification */
@@ -212,6 +277,7 @@ void ToggleTLEWarning(void) {
 
 /* detect if mouse is hovering over ui elements */
 bool IsMouseOverUI(AppConfig* cfg) {
+    if (show_exit_dialog) return true;
     if (!ui_initialized) {
         pd_x = GetScreenWidth() - 400.0f;
         pd_y = GetScreenHeight() - 400.0f;
@@ -225,7 +291,7 @@ bool IsMouseOverUI(AppConfig* cfg) {
     float pass_h = 380 * cfg->ui_scale;
 
     Rectangle helpWindow = { hw_x, hw_y, 900 * cfg->ui_scale, 140 * cfg->ui_scale };
-    Rectangle settingsWindow = { sw_x, sw_y, 220 * cfg->ui_scale, 170 * cfg->ui_scale };
+    Rectangle settingsWindow = { sw_x, sw_y, 250 * cfg->ui_scale, 440 * cfg->ui_scale };
     Rectangle timeWindow = { td_x, td_y, 252 * cfg->ui_scale, 320 * cfg->ui_scale };
     Rectangle tleWindow = { (GetScreenWidth() - 300*cfg->ui_scale)/2.0f, (GetScreenHeight() - 130*cfg->ui_scale)/2.0f, 300*cfg->ui_scale, 130*cfg->ui_scale };
     Rectangle passesWindow = { pd_x, pd_y, pass_w, pass_h };
@@ -256,7 +322,7 @@ bool IsMouseOverUI(AppConfig* cfg) {
     Rectangle btnNow = { btn_start_x + 105 * cfg->ui_scale, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale };
     Rectangle btnClock = { btn_start_x + 140 * cfg->ui_scale, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale };
 
-    float center_x_top = (GetScreenWidth() - (7 * 35 - 5) * cfg->ui_scale) / 2.0f;
+    float center_x_top = (GetScreenWidth() - (8 * 35 - 5) * cfg->ui_scale) / 2.0f;
     Rectangle btnSet  = { center_x_top, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale };
     Rectangle btnHelp = { center_x_top + 35 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale };
     Rectangle btn2D3D = { center_x_top + 70 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale };
@@ -264,6 +330,7 @@ bool IsMouseOverUI(AppConfig* cfg) {
     Rectangle btnHideUnselected = { center_x_top + 140 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale };
     Rectangle btnPasses = { center_x_top + 175 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale };
     Rectangle btnTLEMgr = { center_x_top + 210 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale };
+    Rectangle btnSunlit = { center_x_top + 245 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale };
 
     if (CheckCollisionPointRec(GetMousePosition(), btnHelp)) over_ui = true;
     if (CheckCollisionPointRec(GetMousePosition(), btnSet)) over_ui = true;
@@ -277,13 +344,101 @@ bool IsMouseOverUI(AppConfig* cfg) {
     if (CheckCollisionPointRec(GetMousePosition(), btnSatMgr)) over_ui = true;
     if (CheckCollisionPointRec(GetMousePosition(), btnHideUnselected)) over_ui = true;
     if (CheckCollisionPointRec(GetMousePosition(), btnTLEMgr)) over_ui = true;
+    if (CheckCollisionPointRec(GetMousePosition(), btnSunlit)) over_ui = true;
 
     return over_ui;
 }
 
+void SaveSatSelection(void) {
+    FILE* f = fopen("persistence.bin", "wb");
+    if (!f) return;
+    int count = 0;
+    for (int i = 0; i < sat_count; i++) if (satellites[i].is_active) count++;
+    fwrite(&count, sizeof(int), 1, f);
+    for (int i = 0; i < sat_count; i++) {
+        if (satellites[i].is_active) {
+            unsigned char len = (unsigned char)strlen(satellites[i].name);
+            fwrite(&len, 1, 1, f);
+            fwrite(satellites[i].name, 1, len, f);
+        }
+    }
+    fclose(f);
+}
+
+void LoadSatSelection(void) {
+    FILE* f = fopen("persistence.bin", "rb");
+    if (!f) return;
+    int count;
+    if (fread(&count, sizeof(int), 1, f) != 1) { fclose(f); return; }
+    
+    /* disable all satellites first so only saved ones remain active */
+    for (int i = 0; i < sat_count; i++) {
+        satellites[i].is_active = false;
+    }
+
+    for (int i = 0; i < count; i++) {
+        unsigned char len;
+        char name[64] = {0};
+        if (fread(&len, 1, 1, f) != 1) break;
+        fread(name, 1, len, f);
+        for (int j = 0; j < sat_count; j++) {
+            if (strcmp(satellites[j].name, name) == 0) {
+                satellites[j].is_active = true;
+                break;
+            }
+        }
+    }
+    fclose(f);
+}
+
 /* main ui rendering loop */
 void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
-    /* update pass and polar calculations before drawing */
+    if (IsKeyPressed(KEY_ESCAPE)) {
+        if (IsUITyping()) {
+            // Drop textbox focus if currently typing
+            edit_year = edit_month = edit_day = edit_hour = edit_min = edit_sec = edit_unix = false;
+            edit_doppler_freq = edit_doppler_res = edit_doppler_file = false;
+            edit_sat_search = edit_min_el = false;
+            edit_hl_name = edit_hl_lat = edit_hl_lon = edit_hl_alt = false;
+        } else {
+            show_exit_dialog = !show_exit_dialog;
+        }
+    }
+
+    /* Centralized Drag Management prioritizing top-most visually layered windows */
+    if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+        drag_help = drag_settings = drag_time_dialog = drag_passes = drag_polar = drag_doppler = drag_sat_mgr = drag_tle_mgr = false;
+    }
+
+    if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+        Vector2 m = GetMousePosition();
+        /* evaluate in exact reverse draw-order. Deduct 30 pixels from drag width to preserve close button usability. */
+        if (show_doppler_dialog && CheckCollisionPointRec(m, (Rectangle){dop_x, dop_y, 320*cfg->ui_scale - 30*cfg->ui_scale, 24*cfg->ui_scale})) {
+            drag_doppler = true; drag_doppler_off = Vector2Subtract(m, (Vector2){dop_x, dop_y});
+        }
+        else if (show_polar_dialog && CheckCollisionPointRec(m, (Rectangle){pl_x, pl_y, 300*cfg->ui_scale - 30*cfg->ui_scale, 24*cfg->ui_scale})) {
+            drag_polar = true; drag_polar_off = Vector2Subtract(m, (Vector2){pl_x, pl_y});
+        }
+        else if (show_passes_dialog && CheckCollisionPointRec(m, (Rectangle){pd_x, pd_y, 357*cfg->ui_scale - 30*cfg->ui_scale, 30*cfg->ui_scale})) {
+            drag_passes = true; drag_passes_off = Vector2Subtract(m, (Vector2){pd_x, pd_y});
+        }
+        else if (show_time_dialog && CheckCollisionPointRec(m, (Rectangle){td_x, td_y, 252*cfg->ui_scale - 30*cfg->ui_scale, 24*cfg->ui_scale})) {
+            drag_time_dialog = true; drag_time_off = Vector2Subtract(m, (Vector2){td_x, td_y});
+        }
+        else if (show_settings && CheckCollisionPointRec(m, (Rectangle){sw_x, sw_y, 250*cfg->ui_scale - 30*cfg->ui_scale, 24*cfg->ui_scale})) {
+            drag_settings = true; drag_settings_off = Vector2Subtract(m, (Vector2){sw_x, sw_y});
+        }
+        else if (show_help && CheckCollisionPointRec(m, (Rectangle){hw_x, hw_y, 900*cfg->ui_scale - 30*cfg->ui_scale, 24*cfg->ui_scale})) {
+            drag_help = true; drag_help_off = Vector2Subtract(m, (Vector2){hw_x, hw_y});
+        }
+        else if (show_sat_mgr_dialog && CheckCollisionPointRec(m, (Rectangle){sm_x, sm_y, 400*cfg->ui_scale - 30*cfg->ui_scale, 24*cfg->ui_scale})) {
+            drag_sat_mgr = true; drag_sat_mgr_off = Vector2Subtract(m, (Vector2){sm_x, sm_y});
+        }
+        else if (show_tle_mgr_dialog && CheckCollisionPointRec(m, (Rectangle){tm_x, tm_y, 400*cfg->ui_scale - 30*cfg->ui_scale, 24*cfg->ui_scale})) {
+            drag_tle_mgr = true; drag_tle_mgr_off = Vector2Subtract(m, (Vector2){tm_x, tm_y});
+        }
+    }
+
     if (show_passes_dialog) {
         if (multi_pass_mode) {
             if (last_pass_calc_sat != NULL || (num_passes > 0 && *ctx->current_epoch > passes[0].los_epoch + 1.0/1440.0)) {
@@ -320,7 +475,17 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
         selected_pass_idx = found_idx;
     }
 
-    /* configure raygui global styles */
+    if (!edit_hl_lat && !edit_hl_lon && !edit_hl_alt && !edit_hl_name) {
+        if (home_location.lat != last_hl_lat || home_location.lon != last_hl_lon || home_location.alt != last_hl_alt) {
+            sprintf(text_hl_lat, "%.4f", home_location.lat);
+            sprintf(text_hl_lon, "%.4f", home_location.lon);
+            sprintf(text_hl_alt, "%.4f", home_location.alt);
+            strncpy(text_hl_name, home_location.name, 63);
+            last_hl_lat = home_location.lat; last_hl_lon = home_location.lon; last_hl_alt = home_location.alt;
+        }
+    }
+
+     /* configure raygui global styles */
     GuiSetFont(customFont);
     GuiSetStyle(DEFAULT, TEXT_SIZE, 16 * cfg->ui_scale);
     GuiSetStyle(DEFAULT, BACKGROUND_COLOR, ColorToInt(cfg->ui_primary));
@@ -345,7 +510,7 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
     float pass_w = 357 * cfg->ui_scale;
     float pass_h = 380 * cfg->ui_scale;
     Rectangle helpWindow = { hw_x, hw_y, 900 * cfg->ui_scale, 140 * cfg->ui_scale };
-    Rectangle settingsWindow = { sw_x, sw_y, 220 * cfg->ui_scale, 170 * cfg->ui_scale };
+    Rectangle settingsWindow = { sw_x, sw_y, 250 * cfg->ui_scale, 440 * cfg->ui_scale };
     Rectangle timeWindow = { td_x, td_y, 252 * cfg->ui_scale, 320 * cfg->ui_scale };
     Rectangle tleWindow = { (GetScreenWidth() - 300*cfg->ui_scale)/2.0f, (GetScreenHeight() - 130*cfg->ui_scale)/2.0f, 300*cfg->ui_scale, 130*cfg->ui_scale };
     Rectangle passesWindow = { pd_x, pd_y, pass_w, pass_h };
@@ -364,7 +529,7 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
     Rectangle btnNow = { btn_start_x + 105 * cfg->ui_scale, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale };
     Rectangle btnClock = { btn_start_x + 140 * cfg->ui_scale, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale };
 
-    float center_x_top = (GetScreenWidth() - (7 * 35 - 5) * cfg->ui_scale) / 2.0f;
+    float center_x_top = (GetScreenWidth() - (8 * 35 - 5) * cfg->ui_scale) / 2.0f;
     Rectangle btnSet  = { center_x_top, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale };
     Rectangle btnHelp = { center_x_top + 35 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale };
     Rectangle btn2D3D = { center_x_top + 70 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale };
@@ -372,6 +537,7 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
     Rectangle btnHideUnselected = { center_x_top + 140 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale };
     Rectangle btnPasses = { center_x_top + 175 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale };
     Rectangle btnTLEMgr = { center_x_top + 210 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale };
+    Rectangle btnSunlit = { center_x_top + 245 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale };
 
     /* render context-sensitive satellite information box */
     if (ctx->active_sat && ctx->active_sat->is_active) {
@@ -389,19 +555,6 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
             screenPos = GetWorldToScreen(Vector3Scale(ctx->active_sat->current_pos, 1.0f/DRAW_SCALE), *ctx->camera3d);
         }
         
-        float boxW = 230*cfg->ui_scale;
-        float boxH = 175*cfg->ui_scale;
-        float boxX = screenPos.x + (15*cfg->ui_scale);
-        float boxY = screenPos.y + (15*cfg->ui_scale);
-        
-        if (boxX + boxW > GetScreenWidth()) boxX = screenPos.x - boxW - (15*cfg->ui_scale);
-        if (boxY + boxH > GetScreenHeight()) boxY = screenPos.y - boxH - (15*cfg->ui_scale);
-
-        DrawRectangle(boxX - (5*cfg->ui_scale), boxY - (5*cfg->ui_scale), boxW, boxH, cfg->ui_bg);
-        
-        Color titleColor = (ctx->active_sat == ctx->hovered_sat) ? cfg->sat_highlighted : cfg->sat_selected;
-        DrawUIText(customFont, ctx->active_sat->name, boxX + (5*cfg->ui_scale), boxY, 20*cfg->ui_scale, titleColor);
-        
         double r_km = Vector3Length(ctx->active_sat->current_pos);
         double v_kms = sqrt(MU * (2.0/r_km - 1.0/ctx->active_sat->semi_major_axis));
         float lat_deg = asinf(ctx->active_sat->current_pos.y / r_km) * RAD2DEG;
@@ -410,12 +563,37 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
         while (lon_deg > 180.0f) lon_deg -= 360.0f;
         while (lon_deg < -180.0f) lon_deg += 360.0f;
 
-        char info[256];
-        sprintf(info, "Inc:    %.2f°\nRAAN:   %.2f°\nEcc:    %.5f\nAlt:    %.0f km\nSpd:    %.2f km/s\nLat:    %.2f°\nLon:    %.2f°", 
-                ctx->active_sat->inclination*RAD2DEG, ctx->active_sat->raan*RAD2DEG, ctx->active_sat->eccentricity, r_km-EARTH_RADIUS_KM, v_kms, lat_deg, lon_deg);
-        DrawUIText(customFont, info, boxX + (5*cfg->ui_scale), boxY + (28*cfg->ui_scale), 16*cfg->ui_scale, cfg->text_main);
+        Vector3 sun_pos = calculate_sun_position(*ctx->current_epoch);
+        Vector3 sun_dir = Vector3Normalize(sun_pos);
+        bool eclipsed = is_sat_eclipsed(ctx->active_sat->current_pos, sun_dir);
 
-        /* render periapsis and apoapsis markers */
+        char info[512];
+        sprintf(info, "Inc: %.2f deg\nRAAN: %.2f deg\nEcc: %.4f\nAlt: %.1f km\nSpeed: %.3f km/s\nLat: %.2f\nLon: %.2f\nEclipsed: %s",
+                ctx->active_sat->inclination * RAD2DEG,
+                ctx->active_sat->raan * RAD2DEG,
+                ctx->active_sat->eccentricity,
+                r_km - EARTH_RADIUS_KM,
+                v_kms,
+                lat_deg, lon_deg,
+                eclipsed ? "Yes" : "No");
+
+        Vector2 textSize = MeasureTextEx(customFont, info, 14*cfg->ui_scale, 1.0f);
+        float boxW = fmaxf(180*cfg->ui_scale, textSize.x + 20*cfg->ui_scale);
+        float boxH = textSize.y + 40*cfg->ui_scale; 
+
+        float boxX = screenPos.x + (15*cfg->ui_scale);
+        float boxY = screenPos.y + (15*cfg->ui_scale);
+        
+        if (boxX + boxW > GetScreenWidth()) boxX = screenPos.x - boxW - (15*cfg->ui_scale);
+        if (boxY + boxH > GetScreenHeight()) boxY = screenPos.y - boxH - (15*cfg->ui_scale);
+
+        DrawRectangleRec((Rectangle){boxX - 5*cfg->ui_scale, boxY - 5*cfg->ui_scale, boxW, boxH}, cfg->ui_bg);
+        DrawRectangleLinesEx((Rectangle){boxX - 5*cfg->ui_scale, boxY - 5*cfg->ui_scale, boxW, boxH}, 1.0f, cfg->ui_secondary);
+        
+        Color titleColor = (ctx->active_sat == ctx->hovered_sat) ? cfg->sat_highlighted : cfg->sat_selected;
+        DrawUIText(customFont, ctx->active_sat->name, boxX + (5*cfg->ui_scale), boxY, 18*cfg->ui_scale, titleColor);
+        DrawUIText(customFont, info, boxX + (5*cfg->ui_scale), boxY + (28*cfg->ui_scale), 14*cfg->ui_scale, cfg->text_main);
+
         Vector2 periScreen, apoScreen;
         bool show_peri = true;
         bool show_apo = true;
@@ -450,7 +628,7 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
             apoScreen = GetWorldToScreen(draw_a, *ctx->camera3d);
         }
         
-        float text_size = 16.0f * cfg->ui_scale;
+        float text_size = 14.0f * cfg->ui_scale;
         float x_offset = 20.0f * cfg->ui_scale;
         float y_offset = text_size / 2.2f;
 
@@ -458,15 +636,66 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
         if (show_apo) DrawUIText(customFont, TextFormat("Apo: %.0f km", real_ra-EARTH_RADIUS_KM), apoScreen.x + x_offset, apoScreen.y - y_offset, text_size, cfg->apoapsis);
     }
 
+    int normal_border = ColorToInt(cfg->ui_secondary);
+    int accent_border = ColorToInt(cfg->ui_accent);
+
+
     /* render main control toolbar */
-    if (GuiButton(btnSet, "#142#")) show_settings = !show_settings;
-    if (GuiButton(btnHelp, "#193#")) show_help = !show_help;
+    if (show_settings) GuiSetStyle(DEFAULT, BORDER_COLOR_NORMAL, accent_border);
+    if (GuiButton(btnSet, "#142#")) {
+        if (!show_settings && !opened_once_settings) {
+            FindSmartWindowPosition(250*cfg->ui_scale, 440*cfg->ui_scale, cfg, &sw_x, &sw_y);
+            opened_once_settings = true;
+        }
+        show_settings = !show_settings;
+    }
+    GuiSetStyle(DEFAULT, BORDER_COLOR_NORMAL, normal_border);
+
+    if (show_help) GuiSetStyle(DEFAULT, BORDER_COLOR_NORMAL, accent_border);
+    if (GuiButton(btnHelp, "#193#")) {
+        if (!show_help && !opened_once_help) {
+            FindSmartWindowPosition(900*cfg->ui_scale, 140*cfg->ui_scale, cfg, &hw_x, &hw_y);
+            opened_once_help = true;
+        }
+        show_help = !show_help;
+    }
+    GuiSetStyle(DEFAULT, BORDER_COLOR_NORMAL, normal_border);
+
+    if (*ctx->is_2d_view) GuiSetStyle(DEFAULT, BORDER_COLOR_NORMAL, accent_border);
     if (GuiButton(btn2D3D, *ctx->is_2d_view ? "#161#" : "#160#")) *ctx->is_2d_view = !*ctx->is_2d_view;
-    if (GuiButton(btnSatMgr, "#43#")) show_sat_mgr_dialog = !show_sat_mgr_dialog;
+    GuiSetStyle(DEFAULT, BORDER_COLOR_NORMAL, normal_border);
+
+    if (show_sat_mgr_dialog) GuiSetStyle(DEFAULT, BORDER_COLOR_NORMAL, accent_border);
+    if (GuiButton(btnSatMgr, "#43#")) {
+        if (!show_sat_mgr_dialog && !opened_once_sat_mgr) {
+            FindSmartWindowPosition(400*cfg->ui_scale, 500*cfg->ui_scale, cfg, &sm_x, &sm_y);
+            opened_once_sat_mgr = true;
+        }
+        show_sat_mgr_dialog = !show_sat_mgr_dialog;
+    }
+    GuiSetStyle(DEFAULT, BORDER_COLOR_NORMAL, normal_border);
+
+    if (*ctx->hide_unselected) GuiSetStyle(DEFAULT, BORDER_COLOR_NORMAL, accent_border);
     if (GuiButton(btnHideUnselected, *ctx->hide_unselected ? "#44#" : "#45#")) *ctx->hide_unselected = !*ctx->hide_unselected;
-    if (GuiButton(btnTLEMgr, "#1#")) show_tle_mgr_dialog = !show_tle_mgr_dialog;
+    GuiSetStyle(DEFAULT, BORDER_COLOR_NORMAL, normal_border);
+
+    if (show_tle_mgr_dialog) GuiSetStyle(DEFAULT, BORDER_COLOR_NORMAL, accent_border);
+    if (GuiButton(btnTLEMgr, "#1#")) {
+        if (!show_tle_mgr_dialog && !opened_once_tle_mgr) {
+            FindSmartWindowPosition(400*cfg->ui_scale, 500*cfg->ui_scale, cfg, &tm_x, &tm_y);
+            opened_once_tle_mgr = true;
+        }
+        show_tle_mgr_dialog = !show_tle_mgr_dialog;
+    }
+    GuiSetStyle(DEFAULT, BORDER_COLOR_NORMAL, normal_border);
+
+    if (cfg->highlight_sunlit) GuiSetStyle(DEFAULT, BORDER_COLOR_NORMAL, accent_border);
+    if (GuiButton(btnSunlit, "#147#")) cfg->highlight_sunlit = !cfg->highlight_sunlit;
+    GuiSetStyle(DEFAULT, BORDER_COLOR_NORMAL, normal_border);
 
     if (GuiButton(btnRewind, "#118#")) { *ctx->is_auto_warping = false; *ctx->time_multiplier = StepTimeMultiplier(*ctx->time_multiplier, false); }
+    
+    if (*ctx->time_multiplier == 0.0) GuiSetStyle(DEFAULT, BORDER_COLOR_NORMAL, accent_border);
     if (GuiButton(btnPlayPause, (*ctx->time_multiplier == 0.0) ? "#131#" : "#132#")) {
         *ctx->is_auto_warping = false;
         if (*ctx->time_multiplier != 0.0) {
@@ -476,6 +705,8 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
             *ctx->time_multiplier = *ctx->saved_multiplier != 0.0 ? *ctx->saved_multiplier : 1.0;
         }
     }
+    GuiSetStyle(DEFAULT, BORDER_COLOR_NORMAL, normal_border);
+
     if (GuiButton(btnFastForward, "#119#")) { *ctx->is_auto_warping = false; *ctx->time_multiplier = StepTimeMultiplier(*ctx->time_multiplier, true); }
     
     if (GuiButton(btnNow, "#211#")) { 
@@ -485,9 +716,13 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
         *ctx->saved_multiplier = 1.0;
     }
     
+    if (show_time_dialog) GuiSetStyle(DEFAULT, BORDER_COLOR_NORMAL, accent_border);
     if (GuiButton(btnClock, "#139#")) { 
-        show_time_dialog = !show_time_dialog;
-        if (show_time_dialog) {
+        if (!show_time_dialog) {
+            if (!opened_once_time) {
+                FindSmartWindowPosition(252*cfg->ui_scale, 320*cfg->ui_scale, cfg, &td_x, &td_y);
+                opened_once_time = true;
+            }
             time_t t_unix = (time_t)get_unix_from_epoch(*ctx->current_epoch);
             struct tm *tm_info = gmtime(&t_unix); 
             if (tm_info) {
@@ -500,16 +735,24 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
             }
             sprintf(text_unix, "%ld", (long)t_unix);
         }
+        show_time_dialog = !show_time_dialog;
     }
+    GuiSetStyle(DEFAULT, BORDER_COLOR_NORMAL, normal_border);
 
+    if (show_passes_dialog) GuiSetStyle(DEFAULT, BORDER_COLOR_NORMAL, accent_border);
     if (GuiButton(btnPasses, "#208#")) {
-        show_passes_dialog = !show_passes_dialog;
-        if (show_passes_dialog) {
+        if (!show_passes_dialog) {
+            if (!opened_once_passes) {
+                FindSmartWindowPosition(357*cfg->ui_scale, 380*cfg->ui_scale, cfg, &pd_x, &pd_y);
+                opened_once_passes = true;
+            }
             if (multi_pass_mode) CalculatePasses(NULL, *ctx->current_epoch);
             else if (*ctx->selected_sat) CalculatePasses(*ctx->selected_sat, *ctx->current_epoch);
             else { num_passes = 0; last_pass_calc_sat = NULL; }
         }
+        show_passes_dialog = !show_passes_dialog;
     }
+    GuiSetStyle(DEFAULT, BORDER_COLOR_NORMAL, normal_border);
 
     /* render TLE manager dialog */
     if (show_tle_mgr_dialog) {
@@ -518,23 +761,35 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
             if (f) {
                 char line[256];
                 if (fgets(line, sizeof(line), f)) {
-                    if (strncmp(line, "# EPOCH:", 8) == 0) data_tle_epoch = atol(line + 8);
+                    if (strncmp(line, "# EPOCH:", 8) == 0) {
+                        unsigned int mask = 0;
+                        unsigned int cust_mask = 0;
+                        
+                        // parse with fallback
+                        if (strstr(line, "CUST_MASK:")) {
+                            sscanf(line, "# EPOCH:%ld MASK:%u CUST_MASK:%u", &data_tle_epoch, &mask, &cust_mask);
+                        } else {
+                            int cust_count = 0;
+                            sscanf(line, "# EPOCH:%ld MASK:%u CUST:%d", &data_tle_epoch, &mask, &cust_count);
+                        }
+                        
+                        for (int i = 0; i < 25; i++) {
+                            celestrak_selected[i] = (mask & (1 << i)) != 0;
+                        }
+                        for (int i = 0; i < cfg->custom_tle_source_count; i++) {
+                            cfg->custom_tle_sources[i].selected = (cust_mask & (1 << i)) != 0;
+                        }
+                    }
                 }
                 fclose(f);
             }
             if (data_tle_epoch == -1) data_tle_epoch = 0;
         }
 
-        Rectangle titleBar = { tm_x, tm_y, tmMgrWindow.width, 24 * cfg->ui_scale }; 
-        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), titleBar)) {
-            drag_tle_mgr = true;
-            drag_tle_mgr_off = Vector2Subtract(GetMousePosition(), (Vector2){tm_x, tm_y});
-        }
         if (drag_tle_mgr) {
             tm_x = GetMousePosition().x - drag_tle_mgr_off.x;
             tm_y = GetMousePosition().y - drag_tle_mgr_off.y;
             SnapWindow(&tm_x, &tm_y, tmMgrWindow.width, tmMgrWindow.height, cfg);
-            if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) drag_tle_mgr = false;
         }
 
         if (GuiWindowBox(tmMgrWindow, "TLE Manager")) show_tle_mgr_dialog = false;
@@ -552,7 +807,13 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
         if (GuiButton((Rectangle){tm_x + tmMgrWindow.width - 110*cfg->ui_scale, tm_y + 30*cfg->ui_scale, 100*cfg->ui_scale, 26*cfg->ui_scale}, "Pull Data")) {
             FILE* out = fopen("data.tle", "w");
             if (out) {
-                fprintf(out, "# EPOCH: %ld\n", (long)time(NULL));
+                unsigned int mask = 0;
+                for(int i=0; i<25; i++) if(celestrak_selected[i]) mask |= (1 << i);
+                
+                unsigned int cust_mask = 0;
+                for(int i=0; i<cfg->custom_tle_source_count; i++) if(cfg->custom_tle_sources[i].selected) cust_mask |= (1 << i);
+
+                fprintf(out, "# EPOCH:%ld MASK:%u CUST_MASK:%u\n", (long)time(NULL), mask, cust_mask);
                 fclose(out);
                 
                 for (int i = 0; i < 25; i++) {
@@ -579,6 +840,7 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
                 last_pass_calc_sat = NULL;
                 sat_count = 0;
                 load_tle_data("data.tle");
+                LoadSatSelection();
                 data_tle_epoch = -1; 
             }
         }
@@ -611,7 +873,6 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
         BeginScissorMode(viewRec.x, viewRec.y, viewRec.width, viewRec.height);
         float current_y = tm_y + 65*cfg->ui_scale + tle_mgr_scroll.y;
 
-        // Celestrak Section
         Rectangle celestrakHead = { tm_x + 5*cfg->ui_scale + tle_mgr_scroll.x, current_y, viewRec.width - 10*cfg->ui_scale, 24*cfg->ui_scale };
         if (CheckCollisionPointRec(GetMousePosition(), celestrakHead) && CheckCollisionPointRec(GetMousePosition(), viewRec)) {
             DrawRectangleRec(celestrakHead, ApplyAlpha(cfg->ui_secondary, 0.4f));
@@ -632,7 +893,6 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
             }
         }
 
-        // Other Section
         Rectangle otherHead = { tm_x + 5*cfg->ui_scale + tle_mgr_scroll.x, current_y, viewRec.width - 10*cfg->ui_scale, 24*cfg->ui_scale };
         if (CheckCollisionPointRec(GetMousePosition(), otherHead) && CheckCollisionPointRec(GetMousePosition(), viewRec)) {
             DrawRectangleRec(otherHead, ApplyAlpha(cfg->ui_secondary, 0.4f));
@@ -657,16 +917,10 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
 
     /* render satellite manager dialog */
     if (show_sat_mgr_dialog) {
-        Rectangle titleBar = { sm_x, sm_y, smWindow.width, 24 * cfg->ui_scale }; 
-        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), titleBar)) {
-            drag_sat_mgr = true;
-            drag_sat_mgr_off = Vector2Subtract(GetMousePosition(), (Vector2){sm_x, sm_y});
-        }
         if (drag_sat_mgr) {
             sm_x = GetMousePosition().x - drag_sat_mgr_off.x;
             sm_y = GetMousePosition().y - drag_sat_mgr_off.y;
             SnapWindow(&sm_x, &sm_y, smWindow.width, smWindow.height, cfg);
-            if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) drag_sat_mgr = false;
         }
         
         if (GuiWindowBox(smWindow, "Satellite Manager")) show_sat_mgr_dialog = false;
@@ -691,6 +945,7 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
         }
         
         if (doCheckAll || doUncheckAll) {
+            SaveSatSelection();
             if (show_passes_dialog) {
                 if (multi_pass_mode) CalculatePasses(NULL, *ctx->current_epoch);
                 else if (*ctx->selected_sat) CalculatePasses(*ctx->selected_sat, *ctx->current_epoch);
@@ -709,63 +964,86 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
         GuiSetStyle(LISTVIEW, BORDER_COLOR_FOCUSED, ColorToInt(cfg->ui_secondary));
         GuiSetStyle(LISTVIEW, BORDER_COLOR_PRESSED, ColorToInt(cfg->ui_secondary));
 
-        GuiScrollPanel((Rectangle){ sm_x, sm_y + 70*cfg->ui_scale, smWindow.width, smWindow.height - 70*cfg->ui_scale }, NULL, contentRec, &sat_mgr_scroll, &viewRec);
+        if (filtered_count > 0) {
+            Rectangle contentRec = { 0, 0, smWindow.width - 20*cfg->ui_scale, filtered_count * 25 * cfg->ui_scale };
+            Rectangle viewRec = {0};
 
-        GuiSetStyle(DEFAULT, BORDER_COLOR_FOCUSED, oldFocusD);
-        GuiSetStyle(DEFAULT, BORDER_COLOR_PRESSED, oldPressD);
-        GuiSetStyle(LISTVIEW, BORDER_COLOR_FOCUSED, oldFocusL);
-        GuiSetStyle(LISTVIEW, BORDER_COLOR_PRESSED, oldPressL);
+            int oldFocusD = GuiGetStyle(DEFAULT, BORDER_COLOR_FOCUSED);
+            int oldPressD = GuiGetStyle(DEFAULT, BORDER_COLOR_PRESSED);
+            int oldFocusL = GuiGetStyle(LISTVIEW, BORDER_COLOR_FOCUSED);
+            int oldPressL = GuiGetStyle(LISTVIEW, BORDER_COLOR_PRESSED);
+            GuiSetStyle(DEFAULT, BORDER_COLOR_FOCUSED, ColorToInt(cfg->ui_secondary));
+            GuiSetStyle(DEFAULT, BORDER_COLOR_PRESSED, ColorToInt(cfg->ui_secondary));
+            GuiSetStyle(LISTVIEW, BORDER_COLOR_FOCUSED, ColorToInt(cfg->ui_secondary));
+            GuiSetStyle(LISTVIEW, BORDER_COLOR_PRESSED, ColorToInt(cfg->ui_secondary));
 
-        BeginScissorMode(viewRec.x, viewRec.y, viewRec.width, viewRec.height);
-        for (int k = 0; k < filtered_count; k++) {
-            int sat_idx = filtered_indices[k];
-            float item_y = sm_y + 70*cfg->ui_scale + sat_mgr_scroll.y + k * 25 * cfg->ui_scale;
-            if (item_y + 25*cfg->ui_scale < viewRec.y || item_y > viewRec.y + viewRec.height) continue;
+            GuiScrollPanel((Rectangle){ sm_x, sm_y + 70*cfg->ui_scale, smWindow.width, smWindow.height - 70*cfg->ui_scale }, NULL, contentRec, &sat_mgr_scroll, &viewRec);
 
-            Rectangle cbRec = { sm_x + 10*cfg->ui_scale + sat_mgr_scroll.x, item_y + 4*cfg->ui_scale, 16*cfg->ui_scale, 16*cfg->ui_scale };
-            Rectangle textRec = { sm_x + 35*cfg->ui_scale + sat_mgr_scroll.x, item_y, smWindow.width - 60*cfg->ui_scale, 25*cfg->ui_scale };
+            GuiSetStyle(DEFAULT, BORDER_COLOR_FOCUSED, oldFocusD);
+            GuiSetStyle(DEFAULT, BORDER_COLOR_PRESSED, oldPressD);
+            GuiSetStyle(LISTVIEW, BORDER_COLOR_FOCUSED, oldFocusL);
+            GuiSetStyle(LISTVIEW, BORDER_COLOR_PRESSED, oldPressL);
 
-            bool was_active = satellites[sat_idx].is_active;
-            GuiCheckBox(cbRec, "", &satellites[sat_idx].is_active);
+            BeginScissorMode(viewRec.x, viewRec.y, viewRec.width, viewRec.height);
+            for (int k = 0; k < filtered_count; k++) {
+                int sat_idx = filtered_indices[k];
+                float item_y = sm_y + 70*cfg->ui_scale + sat_mgr_scroll.y + k * 25 * cfg->ui_scale;
+                if (item_y + 25*cfg->ui_scale < viewRec.y || item_y > viewRec.y + viewRec.height) continue;
 
-            if (was_active != satellites[sat_idx].is_active && show_passes_dialog) {
-                if (multi_pass_mode) CalculatePasses(NULL, *ctx->current_epoch);
-                else if (*ctx->selected_sat) CalculatePasses(*ctx->selected_sat, *ctx->current_epoch);
+                Rectangle cbRec = { sm_x + 10*cfg->ui_scale + sat_mgr_scroll.x, item_y + 4*cfg->ui_scale, 16*cfg->ui_scale, 16*cfg->ui_scale };
+                Rectangle textRec = { sm_x + 35*cfg->ui_scale + sat_mgr_scroll.x, item_y, smWindow.width - 60*cfg->ui_scale, 25*cfg->ui_scale };
+
+                bool was_active = satellites[sat_idx].is_active;
+                GuiCheckBox(cbRec, "", &satellites[sat_idx].is_active);
+
+                if (was_active != satellites[sat_idx].is_active) {
+                    SaveSatSelection();
+                    if (show_passes_dialog) {
+                        if (multi_pass_mode) CalculatePasses(NULL, *ctx->current_epoch);
+                        else if (*ctx->selected_sat) CalculatePasses(*ctx->selected_sat, *ctx->current_epoch);
+                    }
+                }
+
+                bool isTargeted = (*ctx->selected_sat == &satellites[sat_idx]);
+                bool isHovered = CheckCollisionPointRec(GetMousePosition(), textRec) && CheckCollisionPointRec(GetMousePosition(), viewRec);
+
+                if (isTargeted) {
+                    DrawRectangleLinesEx(textRec, 1.5f * cfg->ui_scale, cfg->ui_accent);
+                } else if (isHovered) {
+                    DrawRectangleLinesEx(textRec, 1.0f * cfg->ui_scale, ApplyAlpha(cfg->ui_secondary, 0.5f));
+                }
+
+                if (isHovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+                    if (isTargeted) *ctx->selected_sat = NULL;
+                    else *ctx->selected_sat = &satellites[sat_idx];
+                }
+
+                DrawUIText(customFont, satellites[sat_idx].name, textRec.x + 5*cfg->ui_scale, textRec.y + 4*cfg->ui_scale, 16*cfg->ui_scale, isTargeted ? cfg->ui_accent : cfg->text_main);
             }
-
-            bool isTargeted = (*ctx->selected_sat == &satellites[sat_idx]);
-            bool isHovered = CheckCollisionPointRec(GetMousePosition(), textRec) && CheckCollisionPointRec(GetMousePosition(), viewRec);
-
-            if (isTargeted) {
-                // We draw a slightly thicker line or a simple rectangle line for the "rim"
-                DrawRectangleLinesEx(textRec, 1.5f * cfg->ui_scale, cfg->ui_accent);
-            } else if (isHovered) {
-                // Optional: subtle hint for hover
-                DrawRectangleLinesEx(textRec, 1.0f * cfg->ui_scale, ApplyAlpha(cfg->ui_secondary, 0.5f));
+            EndScissorMode();
+        } else {
+            const char* empty_msg = (sat_count == 0) ? "No orbital data loaded." : "No satellites match search.";
+            Vector2 msg_size = MeasureTextEx(customFont, empty_msg, 16*cfg->ui_scale, 1.0f);
+            DrawUIText(customFont, empty_msg, sm_x + (smWindow.width - msg_size.x)/2.0f, sm_y + 180*cfg->ui_scale, 16*cfg->ui_scale, cfg->text_secondary);
+            
+            Rectangle btnImport = { sm_x + (smWindow.width - 200*cfg->ui_scale)/2.0f, sm_y + 220*cfg->ui_scale, 200*cfg->ui_scale, 30*cfg->ui_scale };
+            if (GuiButton(btnImport, "Import orbital data")) {
+                if (!show_tle_mgr_dialog) {
+                    if (!opened_once_tle_mgr) {
+                        FindSmartWindowPosition(400*cfg->ui_scale, 500*cfg->ui_scale, cfg, &tm_x, &tm_y);
+                        opened_once_tle_mgr = true;
+                    }
+                    show_tle_mgr_dialog = true;
+                }
             }
-
-            if (isHovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
-                if (isTargeted) *ctx->selected_sat = NULL;
-                else *ctx->selected_sat = &satellites[sat_idx];
-            }
-
-            DrawUIText(customFont, satellites[sat_idx].name, textRec.x + 5*cfg->ui_scale, textRec.y + 4*cfg->ui_scale, 16*cfg->ui_scale, isTargeted ? cfg->ui_accent : cfg->text_main);
         }
-        EndScissorMode();
     }
-
     /* render help dialog */
     if (show_help) {
-        Rectangle titleBar = { hw_x, hw_y, helpWindow.width, 24 * cfg->ui_scale }; 
-        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), titleBar)) {
-            drag_help = true;
-            drag_help_off = Vector2Subtract(GetMousePosition(), (Vector2){hw_x, hw_y});
-        }
         if (drag_help) {
             hw_x = GetMousePosition().x - drag_help_off.x;
             hw_y = GetMousePosition().y - drag_help_off.y;
             SnapWindow(&hw_x, &hw_y, helpWindow.width, helpWindow.height, cfg);
-            if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) drag_help = false;
         }
         if (GuiWindowBox(helpWindow, "Help & Controls")) show_help = false;
         DrawUIText(customFont, *ctx->is_2d_view ? "Controls: RMB to pan, Scroll to zoom. 'M' switches to 3D. Space: Pause." : "Controls: RMB to orbit, Shift+RMB to pan. 'M' switches to 2D. Space: Pause.", hw_x + 10*cfg->ui_scale, hw_y + 35*cfg->ui_scale, 16*cfg->ui_scale, cfg->text_secondary);
@@ -775,30 +1053,64 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
 
     /* render settings dialog */
     if (show_settings) {
-        Rectangle titleBar = { sw_x, sw_y, settingsWindow.width, 24 * cfg->ui_scale };
-        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), titleBar)) {
-            drag_settings = true;
-            drag_settings_off = Vector2Subtract(GetMousePosition(), (Vector2){sw_x, sw_y});
+        if (IsKeyPressed(KEY_TAB)) {
+            if (edit_hl_name) { edit_hl_name = false; edit_hl_lat = true; }
+            else if (edit_hl_lat) { edit_hl_lat = false; edit_hl_lon = true; }
+            else if (edit_hl_lon) { edit_hl_lon = false; edit_hl_alt = true; }
+            else if (edit_hl_alt) { edit_hl_alt = false; edit_hl_name = true; }
         }
+
         if (drag_settings) {
             sw_x = GetMousePosition().x - drag_settings_off.x;
             sw_y = GetMousePosition().y - drag_settings_off.y;
             SnapWindow(&sw_x, &sw_y, settingsWindow.width, settingsWindow.height, cfg);
-            if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) drag_settings = false;
         }
         if (GuiWindowBox(settingsWindow, "Settings")) show_settings = false;
         
-        Rectangle cbRec = { sw_x + 10 * cfg->ui_scale, sw_y + 40 * cfg->ui_scale, 20 * cfg->ui_scale, 20 * cfg->ui_scale };
-        GuiCheckBox(cbRec, "Show Statistics", &cfg->show_statistics);
+        float sy = sw_y + 40 * cfg->ui_scale;
+        GuiCheckBox((Rectangle){ sw_x + 10 * cfg->ui_scale, sy, 20 * cfg->ui_scale, 20 * cfg->ui_scale }, "Show Statistics", &cfg->show_statistics); sy += 30 * cfg->ui_scale;
+        GuiCheckBox((Rectangle){ sw_x + 10 * cfg->ui_scale, sy, 20 * cfg->ui_scale, 20 * cfg->ui_scale }, "Show Clouds", &cfg->show_clouds); sy += 30 * cfg->ui_scale;
+        GuiCheckBox((Rectangle){ sw_x + 10 * cfg->ui_scale, sy, 20 * cfg->ui_scale, 20 * cfg->ui_scale }, "Night Lights", &cfg->show_night_lights); sy += 30 * cfg->ui_scale;
+        GuiCheckBox((Rectangle){ sw_x + 10 * cfg->ui_scale, sy, 20 * cfg->ui_scale, 20 * cfg->ui_scale }, "Show Markers", &cfg->show_markers); sy += 35 * cfg->ui_scale;
 
-        Rectangle cbRec2 = { sw_x + 10 * cfg->ui_scale, sw_y + 70 * cfg->ui_scale, 20 * cfg->ui_scale, 20 * cfg->ui_scale };
-        GuiCheckBox(cbRec2, "Show Clouds", &cfg->show_clouds);
+        DrawLine(sw_x + 10 * cfg->ui_scale, sy, sw_x + settingsWindow.width - 10 * cfg->ui_scale, sy, cfg->ui_secondary);
+        sy += 15 * cfg->ui_scale;
 
-        Rectangle cbRec3 = { sw_x + 10 * cfg->ui_scale, sw_y + 100 * cfg->ui_scale, 20 * cfg->ui_scale, 20 * cfg->ui_scale };
-        GuiCheckBox(cbRec3, "Night Lights", &cfg->show_night_lights);
+        GuiLabel((Rectangle){ sw_x + 10 * cfg->ui_scale, sy, 200 * cfg->ui_scale, 24 * cfg->ui_scale }, "Home Location:");
+        sy += 25 * cfg->ui_scale;
 
-        Rectangle cbRec4 = { sw_x + 10 * cfg->ui_scale, sw_y + 130 * cfg->ui_scale, 20 * cfg->ui_scale, 20 * cfg->ui_scale };
-        GuiCheckBox(cbRec4, "Show Markers", &cfg->show_markers);
+        GuiLabel((Rectangle){ sw_x + 10 * cfg->ui_scale, sy, 40 * cfg->ui_scale, 24 * cfg->ui_scale }, "Name:");
+        if (GuiTextBox((Rectangle){ sw_x + 60 * cfg->ui_scale, sy, 170 * cfg->ui_scale, 24 * cfg->ui_scale }, text_hl_name, 64, edit_hl_name)) edit_hl_name = !edit_hl_name;
+        sy += 30 * cfg->ui_scale;
+
+        GuiLabel((Rectangle){ sw_x + 10 * cfg->ui_scale, sy, 40 * cfg->ui_scale, 24 * cfg->ui_scale }, "Lat:");
+        if (GuiTextBox((Rectangle){ sw_x + 60 * cfg->ui_scale, sy, 170 * cfg->ui_scale, 24 * cfg->ui_scale }, text_hl_lat, 32, edit_hl_lat)) edit_hl_lat = !edit_hl_lat;
+        sy += 30 * cfg->ui_scale;
+
+        GuiLabel((Rectangle){ sw_x + 10 * cfg->ui_scale, sy, 40 * cfg->ui_scale, 24 * cfg->ui_scale }, "Lon:");
+        if (GuiTextBox((Rectangle){ sw_x + 60 * cfg->ui_scale, sy, 170 * cfg->ui_scale, 24 * cfg->ui_scale }, text_hl_lon, 32, edit_hl_lon)) edit_hl_lon = !edit_hl_lon;
+        sy += 30 * cfg->ui_scale;
+
+        GuiLabel((Rectangle){ sw_x + 10 * cfg->ui_scale, sy, 40 * cfg->ui_scale, 24 * cfg->ui_scale }, "Alt:");
+        if (GuiTextBox((Rectangle){ sw_x + 60 * cfg->ui_scale, sy, 170 * cfg->ui_scale, 24 * cfg->ui_scale }, text_hl_alt, 32, edit_hl_alt)) edit_hl_alt = !edit_hl_alt;
+        sy += 35 * cfg->ui_scale;
+
+        if (GuiButton((Rectangle){ sw_x + 10 * cfg->ui_scale, sy, 220 * cfg->ui_scale, 28 * cfg->ui_scale }, *ctx->picking_home ? "Cancel Picking" : "Pick on Map")) {
+            *ctx->picking_home = !*ctx->picking_home;
+        }
+        sy += 35 * cfg->ui_scale;
+
+        if (GuiButton((Rectangle){ sw_x + 10 * cfg->ui_scale, sy, 220 * cfg->ui_scale, 28 * cfg->ui_scale }, "Save Settings")) {
+            strncpy(home_location.name, text_hl_name, 63);
+            home_location.lat = atof(text_hl_lat);
+            home_location.lon = atof(text_hl_lon);
+            home_location.alt = atof(text_hl_alt);
+            SaveAppConfig("settings.json", cfg);
+            if (show_passes_dialog) {
+                if (multi_pass_mode) CalculatePasses(NULL, *ctx->current_epoch);
+                else if (*ctx->selected_sat) CalculatePasses(*ctx->selected_sat, *ctx->current_epoch);
+            }
+        }
     }
 
     /* render time adjustment dialog */
@@ -813,16 +1125,10 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
             else if (edit_unix) { edit_unix = false; edit_year = true; }
             else { edit_year = true; } 
         }
-        Rectangle titleBar = { td_x, td_y, timeWindow.width, 24 * cfg->ui_scale };
-        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), titleBar)) {
-            drag_time_dialog = true;
-            drag_time_off = Vector2Subtract(GetMousePosition(), (Vector2){td_x, td_y});
-        }
         if (drag_time_dialog) {
             td_x = GetMousePosition().x - drag_time_off.x;
             td_y = GetMousePosition().y - drag_time_off.y;
             SnapWindow(&td_x, &td_y, timeWindow.width, timeWindow.height, cfg);
-            if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) drag_time_dialog = false;
         }
 
         if (GuiWindowBox(timeWindow, "Set Date & Time (UTC)")) show_time_dialog = false;
@@ -883,16 +1189,10 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
 
     /* render pass predictor dialog */
     if (show_passes_dialog) {
-        Rectangle titleBar = { pd_x, pd_y, passesWindow.width, 30 * cfg->ui_scale };
-        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), titleBar)) {
-            drag_passes = true;
-            drag_passes_off = Vector2Subtract(GetMousePosition(), (Vector2){pd_x, pd_y});
-        }
         if (drag_passes) {
             pd_x = GetMousePosition().x - drag_passes_off.x;
             pd_y = GetMousePosition().y - drag_passes_off.y;
             SnapWindow(&pd_x, &pd_y, passesWindow.width, passesWindow.height, cfg);
-            if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) drag_passes = false;
         }
 
         if (GuiWindowBox(passesWindow, "Upcoming Passes")) show_passes_dialog = false;
@@ -958,7 +1258,13 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
                 if (isHovered || isSelected) {
                     DrawRectangleLinesEx(rowBtn, 1.0f, cfg->ui_accent);
                     if (isHovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
-                        show_polar_dialog = true;
+                        if (!show_polar_dialog) {
+                            if (!opened_once_polar) {
+                                FindSmartWindowPosition(300*cfg->ui_scale, 430*cfg->ui_scale, cfg, &pl_x, &pl_y);
+                                opened_once_polar = true;
+                            }
+                            show_polar_dialog = true;
+                        }
                         locked_pass_sat = passes[i].sat;
                         locked_pass_aos = passes[i].aos_epoch;
                         locked_pass_los = passes[i].los_epoch;
@@ -993,16 +1299,10 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
 
     /* render polar tracking plot */
     if (show_polar_dialog) {
-        Rectangle titleBar = { pl_x, pl_y, polarWindow.width, 24 * cfg->ui_scale };
-        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), titleBar)) {
-            drag_polar = true;
-            drag_polar_off = Vector2Subtract(GetMousePosition(), (Vector2){pl_x, pl_y});
-        }
         if (drag_polar) {
             pl_x = GetMousePosition().x - drag_polar_off.x;
             pl_y = GetMousePosition().y - drag_polar_off.y;
             SnapWindow(&pl_x, &pl_y, polarWindow.width, polarWindow.height, cfg);
-            if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) drag_polar = false;
         }
 
         if (GuiWindowBox(polarWindow, "Polar Tracking Plot")) show_polar_dialog = false;
@@ -1033,7 +1333,18 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
                 float r2 = r_max * (90 - el2)/90.0f;
                 Vector2 pt1 = { cx + r1 * sin(az1*DEG2RAD), cy - r1 * cos(az1*DEG2RAD) };
                 Vector2 pt2 = { cx + r2 * sin(az2*DEG2RAD), cy - r2 * cos(az2*DEG2RAD) };
-                DrawLineEx(pt1, pt2, 2.0f, cfg->ui_accent);
+                
+                Color lineCol = cfg->ui_accent;
+                if (cfg->highlight_sunlit) {
+                    double step = (p->los_epoch - p->aos_epoch) / 99.0;
+                    double pt_epoch = p->aos_epoch + k * step;
+                    Vector3 pos3d = calculate_position(p_sat, get_unix_from_epoch(pt_epoch));
+                    Vector3 sun_dir = Vector3Normalize(calculate_sun_position(pt_epoch));
+                    if (!is_sat_eclipsed(pos3d, sun_dir)) lineCol = cfg->sat_highlighted;
+                    else lineCol = cfg->orbit_normal; 
+                }
+
+                DrawLineEx(pt1, pt2, 2.0f, lineCol);
             }
 
             if (*ctx->current_epoch >= p->aos_epoch && *ctx->current_epoch <= p->los_epoch) {
@@ -1070,7 +1381,13 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
             }
 
             if (GuiButton((Rectangle){ pl_x + 20*cfg->ui_scale, pl_y + 385*cfg->ui_scale, 260*cfg->ui_scale, 30*cfg->ui_scale }, "#125# Doppler Shift Analysis")) {
-                show_doppler_dialog = true;
+                if (!show_doppler_dialog) {
+                    if (!opened_once_doppler) {
+                        FindSmartWindowPosition(320*cfg->ui_scale, 480*cfg->ui_scale, cfg, &dop_x, &dop_y);
+                        opened_once_doppler = true;
+                    }
+                    show_doppler_dialog = true;
+                }
             }
         } else {
             DrawUIText(customFont, "No valid pass selected.", pl_x + 20*cfg->ui_scale, pl_y + 40*cfg->ui_scale, 16*cfg->ui_scale, cfg->text_main);
@@ -1086,16 +1403,10 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
             else { edit_doppler_freq = true; } 
         }
 
-        Rectangle titleBar = { dop_x, dop_y, dopplerWindow.width, 24 * cfg->ui_scale };
-        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetMousePosition(), titleBar)) {
-            drag_doppler = true;
-            drag_doppler_off = Vector2Subtract(GetMousePosition(), (Vector2){dop_x, dop_y});
-        }
         if (drag_doppler) {
             dop_x = GetMousePosition().x - drag_doppler_off.x;
             dop_y = GetMousePosition().y - drag_doppler_off.y;
             SnapWindow(&dop_x, &dop_y, dopplerWindow.width, dopplerWindow.height, cfg);
-            if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) drag_doppler = false;
         }
 
         if (GuiWindowBox(dopplerWindow, "Doppler Shift Analysis")) show_doppler_dialog = false;
@@ -1270,10 +1581,10 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
     sprintf(speed_str, "Speed: %gx %s", *ctx->time_multiplier, (*ctx->time_multiplier == 0.0) ? "[PAUSED]" : "");
     DrawUIText(customFont, speed_str, btn_start_x + buttons_w + 20*cfg->ui_scale, GetScreenHeight() - 35*cfg->ui_scale, 20*cfg->ui_scale, cfg->text_main);
 
-    Rectangle btnRecs[12] = { btnSet, btnHelp, btn2D3D, btnSatMgr, btnHideUnselected, btnPasses, btnTLEMgr, btnRewind, btnPlayPause, btnFastForward, btnNow, btnClock };
-    const char* tt_texts[12] = { "Settings", "Help & Controls", "Toggle 2D/3D View", "Satellite Manager", "Toggle Unselected Orbits", "Pass Predictor", "TLE Manager", "Slower / Reverse", "Play / Pause", "Faster", "Real Time", "Set Date & Time" };
+    Rectangle btnRecs[13] = { btnSet, btnHelp, btn2D3D, btnSatMgr, btnHideUnselected, btnPasses, btnTLEMgr, btnSunlit, btnRewind, btnPlayPause, btnFastForward, btnNow, btnClock };
+    const char* tt_texts[13] = { "Settings", "Help & Controls", "Toggle 2D/3D View", "Satellite Manager", "Toggle Unselected Orbits", "Pass Predictor", "TLE Manager", "Highlight Sunlit Orbits", "Slower / Reverse", "Play / Pause", "Faster", "Real Time", "Set Date & Time" };
     
-    /* Evaluate window occlusion directly to avoid self-blocking buttons */
+/* Evaluate window occlusion directly to avoid self-blocking buttons */
     bool over_dialog = false;
     if (show_help && CheckCollisionPointRec(GetMousePosition(), helpWindow)) over_dialog = true;
     if (show_settings && CheckCollisionPointRec(GetMousePosition(), settingsWindow)) over_dialog = true;
@@ -1286,7 +1597,7 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
     if (show_tle_warning && CheckCollisionPointRec(GetMousePosition(), tleWindow)) over_dialog = true;
 
     /* tooltips~~ */
-    for (int i = 0; i < 12; i++) {
+    for (int i = 0; i < 13; i++) {
         if (!over_dialog && CheckCollisionPointRec(GetMousePosition(), btnRecs[i])) {
             tt_hover[i] += GetFrameTime();
             if (tt_hover[i] > 0.3f) {
@@ -1327,5 +1638,24 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
         GuiSetStyle(LABEL, TEXT_COLOR_NORMAL, oldStyle);
 
         DrawUIText(customFont, "REAL TIME", rt_x + 25*cfg->ui_scale, rt_y, 16*cfg->ui_scale, cfg->ui_accent);
+    }
+    /* exit dialog!! byessssssssssss*/
+    if (show_exit_dialog) {
+        DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), (Color){0, 0, 0, 150}); // Darken background
+        
+        float ew = 300 * cfg->ui_scale;
+        float eh = 140 * cfg->ui_scale;
+        Rectangle exitRec = { (GetScreenWidth() - ew) / 2.0f, (GetScreenHeight() - eh) / 2.0f, ew, eh };
+        
+        if (GuiWindowBox(exitRec, "Exit Application")) show_exit_dialog = false;
+        
+        DrawUIText(customFont, "Are you sure you want to exit?", exitRec.x + 25*cfg->ui_scale, exitRec.y + 45*cfg->ui_scale, 16*cfg->ui_scale, cfg->text_main);
+        
+        if (GuiButton((Rectangle){exitRec.x + 20*cfg->ui_scale, exitRec.y + 85*cfg->ui_scale, 120*cfg->ui_scale, 30*cfg->ui_scale}, "Yes")) {
+            *ctx->exit_app = true;
+        }
+        if (GuiButton((Rectangle){exitRec.x + 160*cfg->ui_scale, exitRec.y + 85*cfg->ui_scale, 120*cfg->ui_scale, 30*cfg->ui_scale}, "No")) {
+            show_exit_dialog = false;
+        }
     }
 }

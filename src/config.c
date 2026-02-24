@@ -27,6 +27,7 @@ void LoadAppConfig(const char* filename, AppConfig* config) {
     strcpy(config->theme, "default");
     config->show_markers = true; // default
     config->show_statistics = false; // default
+    config->highlight_sunlit = false; // default
     config->custom_tle_source_count = 0;
 
     if (FileExists(filename)) {
@@ -104,6 +105,16 @@ void LoadAppConfig(const char* filename, AppConfig* config) {
                 char* true_ptr = strstr(stat_ptr, "true");
                 if (true_ptr && (!comma || true_ptr < comma)) {
                     config->show_statistics = true;
+                }
+            }
+
+            // parse sunlit toggle
+            char* hsl_ptr = strstr(text, "\"highlight_sunlit\"");
+            if (hsl_ptr) {
+                char* comma = strchr(hsl_ptr, ',');
+                char* true_ptr = strstr(hsl_ptr, "true");
+                if (true_ptr && (!comma || true_ptr < comma)) {
+                    config->highlight_sunlit = true;
                 }
             }
 
@@ -275,6 +286,7 @@ void SaveAppConfig(const char* filename, AppConfig* config) {
     fprintf(file, "    \"show_night_lights\": %s,\n", config->show_night_lights ? "true" : "false");
     fprintf(file, "    \"show_markers\": %s,\n", config->show_markers ? "true" : "false");
     fprintf(file, "    \"show_statistics\": %s,\n", config->show_statistics ? "true" : "false");
+    fprintf(file, "    \"highlight_sunlit\": %s,\n", config->highlight_sunlit ? "true" : "false");
     
     if (config->custom_tle_source_count > 0) {
         fprintf(file, "    \"custom_tle_sources\": [\n");
