@@ -18,7 +18,6 @@ jobs:
   build-linux:
     name: Build Linux
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -29,18 +28,7 @@ jobs:
           sudo apt-get install -y gcc make libasound2-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev libglu1-mesa-dev libxcursor-dev libxinerama-dev libwayland-dev libxkbcommon-dev
 
       - name: Compile and Bundle Linux
-        run: make linux
-
-      - name: Bundle Linux Release
-        run: |
-          mkdir -p TLEscope-Linux
-          cp bin/TLEscope TLEscope-Linux/
-          cp bin/fetch_tle TLEscope-Linux/
-          cp -r themes/ TLEscope-Linux/
-          cp settings.json TLEscope-Linux/
-          cp data.tle TLEscope-Linux/
-          cp logo.png TLEscope-Linux/
-          cp logo_l.png TLEscope-Linux/
+        [cite_start]run: make linux # Makefile creates dist/TLEscope-Linux [cite: 2]
 
       - name: Upload Linux Artifact
         uses: actions/upload-artifact@v4
@@ -52,7 +40,6 @@ jobs:
   build-windows:
     name: Build Windows
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -63,19 +50,7 @@ jobs:
           sudo apt-get install -y mingw-w64
 
       - name: Compile and Bundle Windows
-        run: make windows
-
-      - name: Bundle Windows Release
-        run: |
-          mkdir -p TLEscope-Windows
-          cp bin/TLEscope.exe TLEscope-Windows/
-          # cp bin/fetch_tle.exe TLEscope-Windows/
-          cp bin/*.dll TLEscope-Windows/
-          cp -r themes/ TLEscope-Windows/
-          cp settings.json TLEscope-Windows/
-          cp data.tle TLEscope-Windows/
-          cp logo.png TLEscope-Windows/
-          cp logo_l.png TLEscope-Windows/
+        [cite_start]run: make windows # Makefile creates dist/TLEscope-Windows [cite: 4]
 
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4
@@ -101,7 +76,7 @@ jobs:
       - name: Zip Artifacts for Release
         run: |
           cd artifacts
-          
+          # Ensure Linux binary is executable before zipping
           chmod +x TLEscope-Linux/TLEscope
           
           zip -r ../TLEscope-Linux.zip TLEscope-Linux/
