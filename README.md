@@ -20,7 +20,7 @@
 
 - **​Customization**: Deeply configurable theming and functional options to suit professional or personal preferences.
 
-- **By nerds, for nerds**:
+- **For nerds, By nerds**:
 TLEscope comes equipped with tools designed for RF engineers, satellite operators, and people who *just* want to know when to expect the next sunlit ISS pass.
 <img width="769" height="581" alt="image" src="https://github.com/user-attachments/assets/45495333-5f00-4c6c-af66-9933264e5e80" />
 
