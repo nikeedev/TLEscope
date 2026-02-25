@@ -1253,7 +1253,7 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
                         
                         Color lineCol = cfg->ui_accent;
                         if (cfg->highlight_sunlit) {
-                            double pt_epoch = p->aos_epoch + k * ((p->los_epoch - p->aos_epoch) / 99.0);
+                            double pt_epoch = p->aos_epoch + k * ((p->los_epoch - p->aos_epoch) / (double)(p->num_pts - 1));
                             if (!is_sat_eclipsed(calculate_position(p_sat, get_unix_from_epoch(pt_epoch)), Vector3Normalize(calculate_sun_position(pt_epoch)))) lineCol = cfg->sat_highlighted;
                             else lineCol = cfg->orbit_normal; 
                         }
