@@ -70,20 +70,20 @@ double get_unix_from_epoch(double epoch) {
     int year = (int)(epoch / 1000.0);
     double day = fmod(epoch, 1000.0);
     
-    // manually convert to UNIX time to avoid SGP4's internal 2-digit limits because jesus christ
-    struct tm t = {0};
-    t.tm_year = year - 1900;
-    t.tm_mday = (int)day;
-    double frac = day - (int)day;
-    t.tm_hour = (int)(frac * 24.0);
-    t.tm_min = (int)((frac * 24.0 - t.tm_hour) * 60.0);
-    t.tm_sec = (int)(((frac * 24.0 - t.tm_hour) * 60.0 - t.tm_min) * 60.0);
+    // pure mathematical unix conversion to avoid OS-level timegm() quantization and stutter
+    int leaps = 0;
+    if (year >= 1970) {
+        for (int i = 1970; i < year; i++) {
+            if ((i % 4 == 0 && i % 100 != 0) || (i % 400 == 0)) leaps++;
+        }
+    } else {
+        for (int i = year; i < 1970; i++) {
+            if ((i % 4 == 0 && i % 100 != 0) || (i % 400 == 0)) leaps--;
+        }
+    }
     
-    #ifdef _WIN32
-        return (double)_mkgmtime(&t);
-    #else
-        return (double)timegm(&t);
-    #endif
+    double unix_days = (year - 1970) * 365.0 + leaps + (day - 1.0);
+    return unix_days * 86400.0;
 }
 
 double epoch_to_gmst(double epoch) {
@@ -415,9 +415,9 @@ void CalculatePasses(Satellite* sat, double start_epoch) {
                     current_pass.los_epoch = t_low;
 
                     current_pass.num_pts = 0;
-                    double step = (current_pass.los_epoch - current_pass.aos_epoch) / 99.0;
+                    double step = (current_pass.los_epoch - current_pass.aos_epoch) / 399.0;
                     if (step > 0) {
-                        for (int k = 0; k < 100; k++) {
+                        for (int k = 0; k < 400; k++) {
                             double pt = current_pass.aos_epoch + k * step;
                             double pt_unix = get_unix_from_epoch(pt);
                             double p_gmst = epoch_to_gmst(pt);

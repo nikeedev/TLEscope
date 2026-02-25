@@ -15,7 +15,7 @@
 #define MU 398600.4418f  
 #define DRAW_SCALE 3000.0f 
 
-#define ORBIT_CACHE_SIZE 91
+#define ORBIT_CACHE_SIZE 361
 #define MAX_CUSTOM_TLE_SOURCES 20
 
 // keeps track of satellite data
@@ -73,6 +73,7 @@ typedef struct {
     bool show_markers;
     bool show_statistics;
     bool highlight_sunlit;
+    bool show_slant_range; // added slant range toggle
     
     CustomTLESource custom_tle_sources[MAX_CUSTOM_TLE_SOURCES];
     int custom_tle_source_count;

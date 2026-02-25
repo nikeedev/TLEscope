@@ -160,7 +160,7 @@ const char* fsMoon3D =
 static AppConfig cfg = {
     .window_width = 1280, .window_height = 720, .target_fps = 120, .ui_scale = 1.0f,
     .show_clouds = false, .show_night_lights = true, .show_markers = true,
-    .show_statistics = false, .highlight_sunlit = false,
+    .show_statistics = false, .highlight_sunlit = false, .show_slant_range = false,
     .bg_color = {0, 0, 0, 255}, .text_main = {255, 255, 255, 255}, .theme = "default",
     .ui_primary = {32, 32, 32, 255}, .ui_secondary = {64, 64, 64, 255}, .ui_accent = {0, 255, 0, 255}
 };
@@ -229,8 +229,7 @@ static void draw_orbit_3d(Satellite* sat, double current_epoch, bool is_highligh
 
     if (is_highlighted) {
         Vector3 prev_pos = {0};
-        // *** CHANGE: always use 1 orbit in 3D ***
-        double orbits_count = 1.0;   // was cfg.orbits_to_draw
+        double orbits_count = 1.0; 
         int segments = fmin(4000, fmax(90, (int)(400 * orbits_count)));
         double period_days = (2.0 * PI / sat->mean_motion) / 86400.0;
         double time_step = (period_days * orbits_count) / segments;
@@ -333,8 +332,6 @@ static bool GetMouseEarthIntersection(Vector2 mouse, bool is_2d, Camera2D cam2d,
         return false;
     }
 }
-
-static bool GetMouseEarthIntersection(Vector2 mouse, bool is_2d, Camera2D cam2d, Camera3D cam3d, double gmst_deg, float earth_offset, float map_w, float map_h, float* out_lat, float* out_lon);
 
 int main(void) {
     LoadAppConfig("settings.json", &cfg);
@@ -548,18 +545,20 @@ int main(void) {
         /* time warp logic for jumping to specific dates */
         if (is_auto_warping) {
             double diff_sec = (auto_warp_target - current_epoch) * 86400.0;
-            if (diff_sec <= 0.0) {
+            double warp_dir = (auto_warp_initial_diff >= 0.0) ? 1.0 : -1.0;
+            
+            if (diff_sec * warp_dir <= 0.0) {
                 current_epoch = auto_warp_target;
                 time_multiplier = 1.0;
                 saved_multiplier = 1.0;
                 is_auto_warping = false;
             } else {
-                double base_speed = auto_warp_initial_diff / 2.0;
-                double eased_speed = fmin(base_speed, diff_sec * 3.0); 
+                double base_speed = fabs(auto_warp_initial_diff) / 2.0;
+                double eased_speed = fmin(base_speed, fabs(diff_sec) * 3.0); 
                 if (eased_speed < 1.0) eased_speed = 1.0;
-                time_multiplier = eased_speed;
+                time_multiplier = eased_speed * warp_dir;
                 
-                if (diff_sec <= time_multiplier * GetFrameTime()) {
+                if (fabs(diff_sec) <= fabs(time_multiplier) * GetFrameTime()) {
                     current_epoch = auto_warp_target;
                     time_multiplier = 1.0;
                     saved_multiplier = 1.0;
@@ -568,16 +567,9 @@ int main(void) {
             }
         }
 
-        /* addressing the float precision drift here */
-        static double time_accumulator = 0.0;
-        time_accumulator += GetFrameTime() * time_multiplier;
-        // only apply the math to the global epoch when a full second passes
-        if (fabs(time_accumulator) >= 1.0) {
-            double whole_seconds = trunc(time_accumulator);
-            current_epoch += whole_seconds / 86400.0;
-            time_accumulator -= whole_seconds;
-            current_epoch = normalize_epoch(current_epoch);
-        }
+        /* update time continuously for smooth visual interpolation */
+        current_epoch += (GetFrameTime() * time_multiplier) / 86400.0;
+        current_epoch = normalize_epoch(current_epoch);
 
         /* asynchronous orbit path updates to keep fps high */
         if (sat_count > 0) {
@@ -960,6 +952,34 @@ int main(void) {
                         }
                     }
 
+                    /* slant range overlay 2d */
+                    if (cfg.show_slant_range && active_sat && active_sat->is_active) {
+                        float sx, sy;
+                        get_map_coordinates(active_sat->current_pos, gmst_deg, cfg.earth_rotation_offset, map_w, map_h, &sx, &sy);
+                        
+                        if (sx - hx > map_w / 2.0f) sx -= map_w;
+                        else if (hx - sx > map_w / 2.0f) sx += map_w;
+
+                        double range = get_sat_range(active_sat, current_epoch, home_location);
+                        
+                        for (int offset_i = -1; offset_i <= 1; offset_i++) {
+                            float x_off = offset_i * map_w;
+                            Vector2 p1 = { hx + x_off, hy };
+                            Vector2 p2 = { sx + x_off, sy };
+                            DrawLineEx(p1, p2, 2.0f / Camera2DParams.zoom, ApplyAlpha(cfg.ui_accent, 0.8f));
+                            
+                            if (Camera2DParams.zoom > 0.1f) {
+                                Vector2 mid = { (p1.x + p2.x)/2.0f, (p1.y + p2.y)/2.0f };
+                                char rng_str[32];
+                                TextCopy(rng_str, TextFormat("%.1f km", range));
+                                Vector2 tSize = MeasureTextEx(customFont, rng_str, m_text_2d, 1.0f);
+                                
+                                DrawRectangle(mid.x - tSize.x/2.0f - 2.0f/Camera2DParams.zoom, mid.y - tSize.y/2.0f - 2.0f/Camera2DParams.zoom, tSize.x + 4.0f/Camera2DParams.zoom, tSize.y + 4.0f/Camera2DParams.zoom, ApplyAlpha(cfg.ui_bg, 0.7f));
+                                DrawUIText(customFont, rng_str, mid.x - tSize.x/2.0f, mid.y - tSize.y/2.0f, m_text_2d, cfg.ui_accent);
+                            }
+                        }
+                    }
+
                     if (cfg.show_markers) {
                         for (int m = 0; m < marker_count; m++) {
                             float mx = (markers[m].lon / 360.0f) * map_w;
@@ -1073,12 +1093,46 @@ int main(void) {
                         DrawLine3D(Vector3Zero(), draw_pos, ApplyAlpha(cfg.orbit_highlighted, sat_alpha));
                     }
                 }
+
+                /* slant range overlay 3d line */
+                if (cfg.show_slant_range && active_sat && active_sat->is_active) {
+                    float h_lat_rad = home_location.lat * DEG2RAD;
+                    float h_lon_rad = (home_location.lon + gmst_deg + cfg.earth_rotation_offset) * DEG2RAD;
+                    Vector3 h_pos3d = { cosf(h_lat_rad)*cosf(h_lon_rad)*draw_earth_radius, sinf(h_lat_rad)*draw_earth_radius, -cosf(h_lat_rad)*sinf(h_lon_rad)*draw_earth_radius };
+                    Vector3 s_pos3d = Vector3Scale(active_sat->current_pos, 1.0f / DRAW_SCALE);
+                    DrawLine3D(h_pos3d, s_pos3d, ApplyAlpha(cfg.ui_accent, 0.6f));
+                }
+
             EndMode3D();
 
             /* screen-space icons/text for 3d objects */
             float m_size_3d = 24.0f * cfg.ui_scale;
             float m_text_3d = 16.0f * cfg.ui_scale;
             float mark_size_3d = 32.0f * cfg.ui_scale;
+
+            Vector3 camForward = Vector3Normalize(Vector3Subtract(Camera3DParams.target, Camera3DParams.position));
+
+            /* slant range text overlay 3d */
+            if (cfg.show_slant_range && active_sat && active_sat->is_active) {
+                float h_lat_rad = home_location.lat * DEG2RAD;
+                float h_lon_rad = (home_location.lon + gmst_deg + cfg.earth_rotation_offset) * DEG2RAD;
+                Vector3 h_pos3d = { cosf(h_lat_rad)*cosf(h_lon_rad)*draw_earth_radius, sinf(h_lat_rad)*draw_earth_radius, -cosf(h_lat_rad)*sinf(h_lon_rad)*draw_earth_radius };
+                Vector3 s_pos3d = Vector3Scale(active_sat->current_pos, 1.0f / DRAW_SCALE);
+                
+                Vector3 mid_pos = Vector3Lerp(h_pos3d, s_pos3d, 0.5f);
+                Vector3 toMid = Vector3Subtract(mid_pos, Camera3DParams.position);
+                
+                if (Vector3DotProduct(Vector3Normalize(toMid), camForward) > 0.0f) {
+                    Vector2 mid_screen = GetWorldToScreen(mid_pos, Camera3DParams);
+                    double range = get_sat_range(active_sat, current_epoch, home_location);
+                    char rng_str[32];
+                    TextCopy(rng_str, TextFormat("%.1f km", range));
+                    Vector2 tSize = MeasureTextEx(customFont, rng_str, m_text_3d, 1.0f);
+                    
+                    DrawRectangle(mid_screen.x - tSize.x/2.0f - 4, mid_screen.y - tSize.y/2.0f - 4, tSize.x + 8, tSize.y + 8, ApplyAlpha(cfg.ui_bg, 0.7f));
+                    DrawUIText(customFont, rng_str, mid_screen.x - tSize.x/2.0f, mid_screen.y - tSize.y/2.0f, m_text_3d, cfg.ui_accent);
+                }
+            }
 
             if (active_sat && active_sat->is_active) {
                 bool is_unselected = (selected_sat != NULL && active_sat != selected_sat);
@@ -1110,7 +1164,6 @@ int main(void) {
 
                 Vector3 draw_pos = Vector3Scale(satellites[i].current_pos, 1.0f / DRAW_SCALE);
                 Vector3 toTarget = Vector3Subtract(draw_pos, Camera3DParams.position);
-                Vector3 camForward = Vector3Normalize(Vector3Subtract(Camera3DParams.target, Camera3DParams.position));
 
                 if (Vector3DotProduct(toTarget, camForward) > 0.0f && !IsOccludedByEarth(Camera3DParams.position, draw_pos, draw_earth_radius)) {
                     Color sCol = (selected_sat == &satellites[i]) ? cfg.sat_selected : (hovered_sat == &satellites[i]) ? cfg.sat_highlighted : cfg.sat_normal;
@@ -1120,8 +1173,6 @@ int main(void) {
                         (Rectangle){sp.x, sp.y, m_size_3d, m_size_3d}, (Vector2){m_size_3d/2.f, m_size_3d/2.f}, 0.0f, sCol);
                 }
             }
-
-            Vector3 camForward = Vector3Normalize(Vector3Subtract(Camera3DParams.target, Camera3DParams.position));
 
             float h_lat_rad = home_location.lat * DEG2RAD, h_lon_rad = (home_location.lon + gmst_deg + cfg.earth_rotation_offset) * DEG2RAD;
             Vector3 h_pos = { cosf(h_lat_rad)*cosf(h_lon_rad)*draw_earth_radius, sinf(h_lat_rad)*draw_earth_radius, -cosf(h_lat_rad)*sinf(h_lon_rad)*draw_earth_radius };

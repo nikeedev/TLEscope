@@ -28,6 +28,7 @@ void LoadAppConfig(const char* filename, AppConfig* config) {
     config->show_markers = true; // default
     config->show_statistics = false; // default
     config->highlight_sunlit = false; // default
+    config->show_slant_range = false; // default
     config->custom_tle_source_count = 0;
 
     if (FileExists(filename)) {
@@ -115,6 +116,16 @@ void LoadAppConfig(const char* filename, AppConfig* config) {
                 char* true_ptr = strstr(hsl_ptr, "true");
                 if (true_ptr && (!comma || true_ptr < comma)) {
                     config->highlight_sunlit = true;
+                }
+            }
+
+            // parse slant range toggle
+            char* ssr_ptr = strstr(text, "\"show_slant_range\"");
+            if (ssr_ptr) {
+                char* comma = strchr(ssr_ptr, ',');
+                char* true_ptr = strstr(ssr_ptr, "true");
+                if (true_ptr && (!comma || true_ptr < comma)) {
+                    config->show_slant_range = true;
                 }
             }
 
@@ -287,6 +298,7 @@ void SaveAppConfig(const char* filename, AppConfig* config) {
     fprintf(file, "    \"show_markers\": %s,\n", config->show_markers ? "true" : "false");
     fprintf(file, "    \"show_statistics\": %s,\n", config->show_statistics ? "true" : "false");
     fprintf(file, "    \"highlight_sunlit\": %s,\n", config->highlight_sunlit ? "true" : "false");
+    fprintf(file, "    \"show_slant_range\": %s,\n", config->show_slant_range ? "true" : "false");
     
     if (config->custom_tle_source_count > 0) {
         fprintf(file, "    \"custom_tle_sources\": [\n");

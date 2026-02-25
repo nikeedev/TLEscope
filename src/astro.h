@@ -10,7 +10,7 @@ typedef struct {
     double los_epoch;
     double max_el_epoch;
     float max_el;
-    Vector2 path_pts[100];
+    Vector2 path_pts[400];
     int num_pts;
 } SatPass;
 
@@ -32,14 +32,13 @@ void get_map_coordinates(Vector3 pos, double gmst_deg, float earth_offset, float
 Vector3 calculate_position(Satellite* sat, double current_unix);
 Vector3 calculate_moon_position(double current_time_days);
 void get_apsis_2d(Satellite* sat, double current_time, bool is_apoapsis, double gmst_deg, float earth_offset, float map_w, float map_h, Vector2* out);
+void get_apsis_times(Satellite* sat, double current_time, double* out_peri_unix, double* out_apo_unix);
 
 void get_az_el(Vector3 eci_pos, double gmst_deg, float obs_lat, float obs_lon, float obs_alt, double* az, double* el);
 void CalculatePasses(Satellite* sat, double start_epoch);
 void epoch_to_time_str(double epoch, char* str);
 void update_orbit_cache(Satellite* sat, double current_epoch);
-void get_apsis_times(Satellite* sat, double current_epoch, double* out_peri_unix, double* out_apo_unix);
 
-// doppler math
 double get_sat_range(Satellite* sat, double epoch, Marker obs);
 double calculate_doppler_freq(Satellite* sat, double epoch, Marker obs, double base_freq);
 
