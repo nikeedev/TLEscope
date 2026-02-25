@@ -607,36 +607,34 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
                 lat_deg, lon_deg,
                 eclipsed ? "Yes" : "No");
 
-        float titleFontSize = 18 * cfg->ui_scale;
-        float infoFontSize = 14 * cfg->ui_scale;
+        float titleFontSize = 18.0f * cfg->ui_scale;
+        float infoFontSize = 14.0f * cfg->ui_scale;
 
+        /* Measure X strictly for dynamic numeric width, ignore Y */
         Vector2 titleSize = MeasureTextEx(customFont, ctx->active_sat->name, titleFontSize, 1.0f);
         Vector2 infoSize = MeasureTextEx(customFont, info, infoFontSize, 1.0f);
 
-        float padX = 10 * cfg->ui_scale;
-        float padY = 10 * cfg->ui_scale;
-        float gapY = 6 * cfg->ui_scale;
-
-        float contentW = fmaxf(titleSize.x, infoSize.x);
-        float boxW = fmaxf(180 * cfg->ui_scale, contentW + (padX * 2));
-        float boxH = padY + titleSize.y + gapY + infoSize.y + padY;
-
-        float boxX = screenPos.x + (15 * cfg->ui_scale);
-        float boxY = screenPos.y + (15 * cfg->ui_scale);
+        float padX = 10.0f * cfg->ui_scale;
+        float boxW = fmaxf(180.0f * cfg->ui_scale, fmaxf(titleSize.x, infoSize.x) + (padX * 2.0f));
         
-        if (boxX + boxW > GetScreenWidth()) boxX = screenPos.x - boxW - (15 * cfg->ui_scale);
-        if (boxY + boxH > GetScreenHeight()) boxY = screenPos.y - boxH - (15 * cfg->ui_scale);
+        /* Hardcode Y: 8 lines of text + Title + Fixed Paddings. 175 is the verified constant. */
+        float boxH = 175.0f * cfg->ui_scale; 
+
+        float boxX = screenPos.x + (15.0f * cfg->ui_scale);
+        float boxY = screenPos.y + (15.0f * cfg->ui_scale);
+        
+        if (boxX + boxW > GetScreenWidth()) boxX = screenPos.x - boxW - (15.0f * cfg->ui_scale);
+        if (boxY + boxH > GetScreenHeight()) boxY = screenPos.y - boxH - (15.0f * cfg->ui_scale);
 
         Rectangle bgRec = {boxX, boxY, boxW, boxH};
         DrawRectangleRec(bgRec, cfg->ui_bg);
         DrawRectangleLinesEx(bgRec, 1.0f, cfg->ui_secondary);
         
         Color titleColor = (ctx->active_sat == ctx->hovered_sat) ? cfg->sat_highlighted : cfg->sat_selected;
-        float currentY = boxY + padY;
-
-        DrawUIText(customFont, ctx->active_sat->name, boxX + padX, currentY, titleFontSize, titleColor);
-        currentY += titleSize.y + gapY;
-        DrawUIText(customFont, info, boxX + padX, currentY, infoFontSize, cfg->text_main);
+        
+        /* render strings at explicitly locked vertical offsets relative to the box */
+        DrawUIText(customFont, ctx->active_sat->name, boxX + padX, boxY + (10.0f * cfg->ui_scale), titleFontSize, titleColor);
+        DrawUIText(customFont, info, boxX + padX, boxY + (38.0f * cfg->ui_scale), infoFontSize, cfg->text_main);
         
         Vector2 periScreen, apoScreen;
         bool show_peri = true;
