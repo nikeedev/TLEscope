@@ -607,23 +607,37 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
                 lat_deg, lon_deg,
                 eclipsed ? "Yes" : "No");
 
-        Vector2 textSize = MeasureTextEx(customFont, info, 14*cfg->ui_scale, 1.0f);
-        float boxW = fmaxf(180*cfg->ui_scale, textSize.x + 20*cfg->ui_scale);
-        float boxH = textSize.y + 50*cfg->ui_scale;
+        float titleFontSize = 18 * cfg->ui_scale;
+        float infoFontSize = 14 * cfg->ui_scale;
 
-        float boxX = screenPos.x + (15*cfg->ui_scale);
-        float boxY = screenPos.y + (15*cfg->ui_scale);
+        Vector2 titleSize = MeasureTextEx(customFont, ctx->active_sat->name, titleFontSize, 1.0f);
+        Vector2 infoSize = MeasureTextEx(customFont, info, infoFontSize, 1.0f);
+
+        float padX = 10 * cfg->ui_scale;
+        float padY = 10 * cfg->ui_scale;
+        float gapY = 6 * cfg->ui_scale;
+
+        float contentW = fmaxf(titleSize.x, infoSize.x);
+        float boxW = fmaxf(180 * cfg->ui_scale, contentW + (padX * 2));
+        float boxH = padY + titleSize.y + gapY + infoSize.y + padY;
+
+        float boxX = screenPos.x + (15 * cfg->ui_scale);
+        float boxY = screenPos.y + (15 * cfg->ui_scale);
         
-        if (boxX + boxW > GetScreenWidth()) boxX = screenPos.x - boxW - (15*cfg->ui_scale);
-        if (boxY + boxH > GetScreenHeight()) boxY = screenPos.y - boxH - (15*cfg->ui_scale);
+        if (boxX + boxW > GetScreenWidth()) boxX = screenPos.x - boxW - (15 * cfg->ui_scale);
+        if (boxY + boxH > GetScreenHeight()) boxY = screenPos.y - boxH - (15 * cfg->ui_scale);
 
-        DrawRectangleRec((Rectangle){boxX - 5*cfg->ui_scale, boxY - 5*cfg->ui_scale, boxW, boxH}, cfg->ui_bg);
-        DrawRectangleLinesEx((Rectangle){boxX - 5*cfg->ui_scale, boxY - 5*cfg->ui_scale, boxW, boxH}, 1.0f, cfg->ui_secondary);
+        Rectangle bgRec = {boxX, boxY, boxW, boxH};
+        DrawRectangleRec(bgRec, cfg->ui_bg);
+        DrawRectangleLinesEx(bgRec, 1.0f, cfg->ui_secondary);
         
         Color titleColor = (ctx->active_sat == ctx->hovered_sat) ? cfg->sat_highlighted : cfg->sat_selected;
-        DrawUIText(customFont, ctx->active_sat->name, boxX + (5*cfg->ui_scale), boxY, 18*cfg->ui_scale, titleColor);
-        DrawUIText(customFont, info, boxX + (5*cfg->ui_scale), boxY + (28*cfg->ui_scale), 14*cfg->ui_scale, cfg->text_main);
+        float currentY = boxY + padY;
 
+        DrawUIText(customFont, ctx->active_sat->name, boxX + padX, currentY, titleFontSize, titleColor);
+        currentY += titleSize.y + gapY;
+        DrawUIText(customFont, info, boxX + padX, currentY, infoFontSize, cfg->text_main);
+        
         Vector2 periScreen, apoScreen;
         bool show_peri = true;
         bool show_apo = true;
