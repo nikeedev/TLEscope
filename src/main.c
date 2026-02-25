@@ -12,6 +12,7 @@
 
 /* * shaders for day/night transition 
  * uses dot product between surface normal and sun direction
+ * casting a ray from the fragment towards the sun and calculating its minimum distance to the Moon's center in local space for solar eclipses
  */
 const char* fs3D = 
     "#version 330\n"
@@ -21,6 +22,9 @@ const char* fs3D =
     "uniform sampler2D texture0;\n"
     "uniform sampler2D texture1;\n"
     "uniform vec3 sunDir;\n"
+    "uniform vec3 moonPos;\n"
+    "uniform float moonRadius;\n"
+    "uniform float earthRadius;\n"
     "void main() {\n"
     "    vec4 day = texture(texture0, fragTexCoord);\n"
     "    vec4 night = texture(texture1, fragTexCoord);\n"
@@ -29,7 +33,20 @@ const char* fs3D =
     "    vec3 normal = vec3(cos(theta)*sin(phi), cos(phi), -sin(theta)*sin(phi));\n"
     "    float intensity = dot(normal, sunDir);\n"
     "    float blend = smoothstep(-0.15, 0.15, intensity);\n"
-    "    finalColor = mix(night, day, blend) * fragColor;\n"
+    "    vec3 fragPos = normal * earthRadius;\n"
+    "    vec3 toMoon = moonPos - fragPos;\n"
+    "    float distSunward = dot(toMoon, sunDir);\n"
+    "    float shadow = 1.0;\n"
+    "    if (distSunward > 0.0) {\n"
+    "        vec3 proj = fragPos + sunDir * distSunward;\n"
+    "        float distSq = dot(proj - moonPos, proj - moonPos);\n"
+    "        float rSq = moonRadius * moonRadius;\n"
+    "        if (distSq < rSq * 4.0) {\n"
+    "            shadow = mix(0.03, 1.0, smoothstep(rSq * 0.1, rSq * 4.0, distSq));\n"
+    "        }\n"
+    "    }\n"
+    "    vec4 shadowedDay = vec4(day.rgb * shadow, day.a);\n"
+    "    finalColor = mix(night, shadowedDay, blend) * fragColor;\n"
     "}\n";
 
 const char* fs2D = 
@@ -40,6 +57,9 @@ const char* fs2D =
     "uniform sampler2D texture0;\n"
     "uniform sampler2D texture1;\n"
     "uniform vec3 sunDir;\n"
+    "uniform vec3 moonPos;\n"
+    "uniform float moonRadius;\n"
+    "uniform float earthRadius;\n"
     "void main() {\n"
     "    vec4 day = texture(texture0, fragTexCoord);\n"
     "    vec4 night = texture(texture1, fragTexCoord);\n"
@@ -48,17 +68,33 @@ const char* fs2D =
     "    vec3 normal = vec3(cos(theta)*sin(phi), cos(phi), -sin(theta)*sin(phi));\n"
     "    float intensity = dot(normal, sunDir);\n"
     "    float blend = smoothstep(-0.15, 0.15, intensity);\n"
-    "    finalColor = mix(night, day, blend) * fragColor;\n"
+    "    vec3 fragPos = normal * earthRadius;\n"
+    "    vec3 toMoon = moonPos - fragPos;\n"
+    "    float distSunward = dot(toMoon, sunDir);\n"
+    "    float shadow = 1.0;\n"
+    "    if (distSunward > 0.0) {\n"
+    "        vec3 proj = fragPos + sunDir * distSunward;\n"
+    "        float distSq = dot(proj - moonPos, proj - moonPos);\n"
+    "        float rSq = moonRadius * moonRadius;\n"
+    "        if (distSq < rSq * 4.0) {\n"
+    "            shadow = mix(0.03, 1.0, smoothstep(rSq * 0.1, rSq * 4.0, distSq));\n"
+    "        }\n"
+    "    }\n"
+    "    vec4 shadowedDay = vec4(day.rgb * shadow, day.a);\n"
+    "    finalColor = mix(night, shadowedDay, blend) * fragColor;\n"
     "}\n";
 
 /* cloud shader handles transparency based on sun position */
-const char* fsCloud3D = 
+    const char* fsCloud3D = 
     "#version 330\n"
     "in vec2 fragTexCoord;\n"
     "in vec4 fragColor;\n"
     "out vec4 finalColor;\n"
     "uniform sampler2D texture0;\n"
     "uniform vec3 sunDir;\n"
+    "uniform vec3 moonPos;\n"
+    "uniform float moonRadius;\n"
+    "uniform float earthRadius;\n"
     "void main() {\n"
     "    vec4 texel = texture(texture0, fragTexCoord);\n"
     "    float theta = (fragTexCoord.x - 0.5) * 6.28318530718;\n"
@@ -66,7 +102,58 @@ const char* fsCloud3D =
     "    vec3 normal = vec3(cos(theta)*sin(phi), cos(phi), -sin(theta)*sin(phi));\n"
     "    float intensity = dot(normal, sunDir);\n"
     "    float alpha = smoothstep(-0.15, 0.05, intensity);\n"
-    "    finalColor = vec4(texel.rgb, texel.a * alpha) * fragColor;\n"
+    "    vec3 fragPos = normal * earthRadius;\n"
+    "    vec3 toMoon = moonPos - fragPos;\n"
+    "    float distSunward = dot(toMoon, sunDir);\n"
+    "    float shadow = 1.0;\n"
+    "    if (distSunward > 0.0) {\n"
+    "        vec3 proj = fragPos + sunDir * distSunward;\n"
+    "        float distSq = dot(proj - moonPos, proj - moonPos);\n"
+    "        float rSq = moonRadius * moonRadius;\n"
+    "        if (distSq < rSq * 4.0) {\n"
+    "            shadow = mix(0.03, 1.0, smoothstep(rSq * 0.1, rSq * 4.0, distSq));\n"
+    "        }\n"
+    "    }\n"
+    "    finalColor = vec4(texel.rgb * shadow, texel.a * alpha) * fragColor;\n"
+    "}\n";
+
+/* shader to handle moon self-shadowing and earth's eclipse projection */
+const char* fsMoon3D = 
+    "#version 330\n"
+    "in vec2 fragTexCoord;\n"
+    "in vec4 fragColor;\n"
+    "out vec4 finalColor;\n"
+    "uniform sampler2D texture0;\n"
+    "uniform vec3 sunDir;\n"
+    "uniform vec3 moonPos;\n"
+    "uniform mat4 moonRot;\n"
+    "uniform float moonRadius;\n"
+    "uniform float earthRadiusSq;\n"
+    "void main() {\n"
+    "    vec4 texel = texture(texture0, fragTexCoord);\n"
+    "    float theta = (fragTexCoord.x - 0.5) * 6.28318530718;\n"
+    "    float phi = fragTexCoord.y * 3.14159265359;\n"
+    "    vec3 localNormal = vec3(cos(theta)*sin(phi), cos(phi), -sin(theta)*sin(phi));\n"
+    "    vec3 worldNormal = normalize(mat3(moonRot) * localNormal);\n"
+    "    vec3 worldPos = moonPos + worldNormal * moonRadius;\n"
+    "    float NdotL = dot(worldNormal, sunDir);\n"
+    "    float diffuse = smoothstep(-0.05, 0.05, NdotL);\n"
+    "    float b = dot(worldPos, sunDir);\n"
+    "    float c = dot(worldPos, worldPos) - earthRadiusSq;\n"
+    "    float discriminant = b * b - c;\n"
+    "    float shadow = 1.0;\n"
+    "    if (discriminant > 0.0 && b < 0.0) {\n"
+    "        float distSq = dot(worldPos, worldPos) - b * b;\n"
+    "        float umbraSq = earthRadiusSq * 0.6;\n"
+    "        float penumbraSq = earthRadiusSq * 1.2;\n"
+    "        if (distSq < umbraSq) shadow = 0.05;\n"
+    "        else if (distSq < penumbraSq) shadow = mix(0.05, 1.0, smoothstep(umbraSq, penumbraSq, distSq));\n"
+    "    }\n"
+    "    vec3 umbraColor = vec3(0.5, 0.1, 0.05);\n"
+    "    vec3 shadowColor = mix(umbraColor * texel.rgb, texel.rgb, shadow);\n"
+    "    float ambient = 0.01;\n"
+    "    float light = max(ambient, diffuse);\n"
+    "    finalColor = vec4(shadowColor * light, texel.a) * fragColor;\n"
     "}\n";
 
 /* application state and resources */
@@ -315,6 +402,14 @@ int main(void) {
     Shader shaderCloud = LoadShaderFromMemory(NULL, fsCloud3D);
     int sunDirLocCloud = GetShaderLocation(shaderCloud, "sunDir");
     
+    Shader shaderMoon = LoadShaderFromMemory(NULL, fsMoon3D);
+    int sunDirLocMoon = GetShaderLocation(shaderMoon, "sunDir");
+    int moonPosLocMoon = GetShaderLocation(shaderMoon, "moonPos");
+    int moonRotLocMoon = GetShaderLocation(shaderMoon, "moonRot");
+    int moonRadiusLocMoon = GetShaderLocation(shaderMoon, "moonRadius");
+    int earthRadiusSqLocMoon = GetShaderLocation(shaderMoon, "earthRadiusSq");
+
+
     DrawLoadingScreen(0.6f, "Generating Meshes...", logoTex);
     float draw_earth_radius = EARTH_RADIUS_KM / DRAW_SCALE;
     Mesh sphereMesh = GenEarthMesh(draw_earth_radius, 64, 64);
@@ -336,6 +431,20 @@ int main(void) {
     moonModel = LoadModelFromMesh(moonMesh);
     moonTexture = LoadTexture(TextFormat("themes/%s/moon.png", cfg.theme));
     moonModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = moonTexture;
+    moonModel.materials[0].shader = shaderMoon;
+    float earthRadSq = (EARTH_RADIUS_KM / DRAW_SCALE) * (EARTH_RADIUS_KM / DRAW_SCALE);
+    SetShaderValue(shaderMoon, moonRadiusLocMoon, &draw_moon_radius, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shaderMoon, earthRadiusSqLocMoon, &earthRadSq, SHADER_UNIFORM_FLOAT);
+    
+    int moonPosLoc3D = GetShaderLocation(shader3D, "moonPos");
+    int moonPosLoc2D = GetShaderLocation(shader2D, "moonPos");
+    int moonPosLocCloud = GetShaderLocation(shaderCloud, "moonPos");
+    SetShaderValue(shader3D, GetShaderLocation(shader3D, "earthRadius"), &draw_earth_radius, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader3D, GetShaderLocation(shader3D, "moonRadius"), &draw_moon_radius, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader2D, GetShaderLocation(shader2D, "earthRadius"), &draw_earth_radius, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader2D, GetShaderLocation(shader2D, "moonRadius"), &draw_moon_radius, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shaderCloud, GetShaderLocation(shaderCloud, "earthRadius"), &draw_cloud_radius, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shaderCloud, GetShaderLocation(shaderCloud, "moonRadius"), &draw_moon_radius, SHADER_UNIFORM_FLOAT);
 
     DrawLoadingScreen(0.95f, "Finalizing UI...", logoTex);
     satIcon = LoadTexture(TextFormat("themes/%s/sat_icon.png", cfg.theme));
@@ -459,8 +568,16 @@ int main(void) {
             }
         }
 
-        current_epoch += (GetFrameTime() * time_multiplier) / 86400.0; 
-        current_epoch = normalize_epoch(current_epoch);
+        /* addressing the float precision drift here */
+        static double time_accumulator = 0.0;
+        time_accumulator += GetFrameTime() * time_multiplier;
+        // only apply the math to the global epoch when a full second passes
+        if (fabs(time_accumulator) >= 1.0) {
+            double whole_seconds = trunc(time_accumulator);
+            current_epoch += whole_seconds / 86400.0;
+            time_accumulator -= whole_seconds;
+            current_epoch = normalize_epoch(current_epoch);
+        }
 
         /* asynchronous orbit path updates to keep fps high */
         if (sat_count > 0) {
@@ -705,7 +822,10 @@ int main(void) {
                     Vector3 sunEci = calculate_sun_position(current_epoch);
                     float earth_rot_rad = (gmst_deg + cfg.earth_rotation_offset) * DEG2RAD;
                     Vector3 sunEcef = Vector3Transform(sunEci, MatrixRotateY(-earth_rot_rad));
+                    Vector3 moonEcef = Vector3Transform(draw_moon_pos, MatrixRotateY(-earth_rot_rad));
+                    
                     SetShaderValue(shader2D, sunDirLoc2D, &sunEcef, SHADER_UNIFORM_VEC3);
+                    SetShaderValue(shader2D, moonPosLoc2D, &moonEcef, SHADER_UNIFORM_VEC3);
                 }
 
                 DrawTexturePro(earthTexture, (Rectangle){0, 0, earthTexture.width, earthTexture.height}, 
@@ -884,7 +1004,10 @@ int main(void) {
                     Vector3 sunEci = calculate_sun_position(current_epoch);
                     float earth_rot_rad = (gmst_deg + cfg.earth_rotation_offset) * DEG2RAD;
                     Vector3 sunEcef = Vector3Transform(sunEci, MatrixRotateY(-earth_rot_rad));
+                    Vector3 moonEcef = Vector3Transform(draw_moon_pos, MatrixRotateY(-earth_rot_rad));
+                    
                     SetShaderValue(shader3D, sunDirLoc3D, &sunEcef, SHADER_UNIFORM_VEC3);
+                    SetShaderValue(shader3D, moonPosLoc3D, &moonEcef, SHADER_UNIFORM_VEC3);
                 } else {
                     earthModel.materials[0].shader = defaultEarthShader;
                 }
@@ -901,13 +1024,21 @@ int main(void) {
                         cloudModel.materials[0].shader = shaderCloud;
                         Vector3 sunEci = calculate_sun_position(current_epoch);
                         Vector3 sunCloudSpace = Vector3Transform(sunEci, MatrixRotateY(-cloud_rot_rad));
+                        Vector3 moonCloudSpace = Vector3Transform(draw_moon_pos, MatrixRotateY(-cloud_rot_rad));
+                        
                         SetShaderValue(shaderCloud, sunDirLocCloud, &sunCloudSpace, SHADER_UNIFORM_VEC3);
+                        SetShaderValue(shaderCloud, moonPosLocCloud, &moonCloudSpace, SHADER_UNIFORM_VEC3);
                     } else {
                         cloudModel.materials[0].shader = defaultCloudShader;
                     }
 
                     DrawModel(cloudModel, Vector3Zero(), 1.0f, WHITE);
                 }
+
+                Vector3 sunDirWorld = Vector3Normalize(calculate_sun_position(current_epoch));
+                SetShaderValue(shaderMoon, sunDirLocMoon, &sunDirWorld, SHADER_UNIFORM_VEC3);
+                SetShaderValue(shaderMoon, moonPosLocMoon, &draw_moon_pos, SHADER_UNIFORM_VEC3);
+                SetShaderValueMatrix(shaderMoon, moonRotLocMoon, moonModel.transform);
 
                 DrawModel(moonModel, draw_moon_pos, 1.0f, WHITE);
 
@@ -1086,6 +1217,7 @@ int main(void) {
     UnloadShader(shader3D);
     UnloadShader(shader2D);
     UnloadShader(shaderCloud);
+    UnloadShader(shaderMoon);
     UnloadTexture(cloudTexture);
     UnloadModel(cloudModel);
     UnloadTexture(moonTexture);

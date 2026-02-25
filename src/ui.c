@@ -211,9 +211,18 @@ double StepTimeMultiplier(double current, bool increase) {
 
 /* convert unix timestamp to astronomical epoch */
 double unix_to_epoch(double target_unix) {
-    double e0 = get_current_real_time_epoch();
-    double u0 = get_unix_from_epoch(e0);
-    return e0 + (target_unix - u0) / 86400.0;
+    time_t t = (time_t)target_unix;
+    struct tm *gmt = gmtime(&t);
+    
+    if (!gmt) {
+        return get_current_real_time_epoch(); // fallback to current time if wonky
+    }
+
+    int year = gmt->tm_year + 1900;
+    double day_of_year = gmt->tm_yday + 1.0;
+    double fraction_of_day = (gmt->tm_hour + gmt->tm_min / 60.0 + gmt->tm_sec / 3600.0) / 24.0;
+
+    return (year * 1000.0) + day_of_year + fraction_of_day;
 }
 
 /* case-insensitive string search */
@@ -870,21 +879,21 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
                 for (int i = 0; i < NUM_RETLECTOR_SOURCES; i++) {
                     if (retlector_selected[i]) {
                         char cmd[512];
-                        snprintf(cmd, sizeof(cmd), "curl -sL \"%s\" >> data.tle", RETLECTOR_SOURCES[i].url);
+                        snprintf(cmd, sizeof(cmd), "curl -sL --compressed \"%s\" >> data.tle", RETLECTOR_SOURCES[i].url);
                         system(cmd);
                     }
                 }
                 for (int i = 0; i < 25; i++) {
                     if (celestrak_selected[i]) {
                         char cmd[512];
-                        snprintf(cmd, sizeof(cmd), "curl -sL \"%s\" >> data.tle", SOURCES[i].url);
+                        snprintf(cmd, sizeof(cmd), "curl -sL --compressed \"%s\" >> data.tle", SOURCES[i].url);
                         system(cmd);
                     }
                 }
                 for (int i = 0; i < cfg->custom_tle_source_count; i++) {
                     if (cfg->custom_tle_sources[i].selected) {
                         char cmd[512];
-                        snprintf(cmd, sizeof(cmd), "curl -sL \"%s\" >> data.tle", cfg->custom_tle_sources[i].url);
+                        snprintf(cmd, sizeof(cmd), "curl -sL --compressed \"%s\" >> data.tle", cfg->custom_tle_sources[i].url);
                         system(cmd);
                     }
                 }

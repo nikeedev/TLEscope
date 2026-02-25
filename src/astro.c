@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "astro.h"
 #include "types.h"
 
@@ -34,16 +35,17 @@ double get_current_real_time_epoch(void) {
     struct tm *gmt = gmtime(&now);
     
     int year = gmt->tm_year + 1900;
-    int yy = year % 100;
     double day_of_year = gmt->tm_yday + 1.0; 
     double fraction_of_day = (gmt->tm_hour + gmt->tm_min / 60.0 + gmt->tm_sec / 3600.0) / 24.0;
-    return (yy * 1000.0) + day_of_year + fraction_of_day;
+    
+    // modified to return full YYYY format to make global time sim less fuckywucky, 
+    // afterwards we can just use the YY format for SGP4 data.
+    return (year * 1000.0) + day_of_year + fraction_of_day;
 }
 
 double normalize_epoch(double epoch) {
-    int yy = (int)(epoch / 1000.0);
+    int year = (int)(epoch / 1000.0);
     double day_of_year = fmod(epoch, 1000.0);
-    int year = (yy < 57) ? 2000 + yy : 1900 + yy;
 
     while (1) {
         int days_in_yr = ((year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)) ? 366 : 365;
@@ -51,26 +53,37 @@ double normalize_epoch(double epoch) {
         if (day_of_year >= days_in_yr + 1.0) {
             day_of_year -= days_in_yr;
             year++;
-            yy = year % 100;
         } else if (day_of_year < 1.0) {
             year--;
-            yy = year % 100;
             int prev_days_in_yr = ((year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)) ? 366 : 365;
             day_of_year += prev_days_in_yr;
         } else {
             break;
         }
     }
-    
-    return (yy * 1000.0) + day_of_year;
+    return (year * 1000.0) + day_of_year;
 }
 
 // utility to convert normalized epoch format to unix time for sgp4 math
 double get_unix_from_epoch(double epoch) {
     epoch = normalize_epoch(epoch);
-    int yy = (int)(epoch / 1000.0);
+    int year = (int)(epoch / 1000.0);
     double day = fmod(epoch, 1000.0);
-    return ConvertEpochYearAndDayToUnix(yy, day);
+    
+    // manually convert to UNIX time to avoid SGP4's internal 2-digit limits because jesus christ
+    struct tm t = {0};
+    t.tm_year = year - 1900;
+    t.tm_mday = (int)day;
+    double frac = day - (int)day;
+    t.tm_hour = (int)(frac * 24.0);
+    t.tm_min = (int)((frac * 24.0 - t.tm_hour) * 60.0);
+    t.tm_sec = (int)(((frac * 24.0 - t.tm_hour) * 60.0 - t.tm_min) * 60.0);
+    
+    #ifdef _WIN32
+        return (double)_mkgmtime(&t);
+    #else
+        return (double)timegm(&t);
+    #endif
 }
 
 double epoch_to_gmst(double epoch) {
@@ -84,9 +97,8 @@ double epoch_to_gmst(double epoch) {
 
 void epoch_to_datetime_str(double epoch, char* buffer) {
     epoch = normalize_epoch(epoch);
-    int yy = (int)(epoch / 1000.0);
+    int year = (int)(epoch / 1000.0);
     double day_of_year = fmod(epoch, 1000.0);
-    int year = (yy < 57) ? 2000 + yy : 1900 + yy;
 
     int days_in_month[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
     if ((year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)) days_in_month[1] = 29;
@@ -163,7 +175,11 @@ void load_tle_data(const char* filename) {
                 continue; // invalid parse gracefully skips
             }
 
-            sat->epoch_days = parse_tle_double(line1, 18, 14);
+            double raw_epoch = parse_tle_double(line1, 18, 14);
+            // converts the shimty yy to yyyy
+            int yy = (int)(raw_epoch / 1000.0);
+            int year = (yy < 57) ? 2000 + yy : 1900 + yy;
+            sat->epoch_days = (year * 1000.0) + fmod(raw_epoch, 1000.0);
             sat->epoch_unix = get_unix_from_epoch(sat->epoch_days); // precalculated for perf
             sat->inclination = parse_tle_double(line2, 8, 8) * DEG2RAD;
             sat->raan = parse_tle_double(line2, 17, 8) * DEG2RAD;
@@ -471,32 +487,56 @@ bool is_sat_eclipsed(Vector3 pos_km, Vector3 sun_dir_norm) {
     return dist_sq < (EARTH_RADIUS_KM * EARTH_RADIUS_KM);
 }
 
+
+
+
+/* HYPER-ENHANCED MOON FUNCTION OMEGABLOCK BING BONG MK.3 PRO [OVERCLOCKED & OPTIMIZED] */
 Vector3 calculate_moon_position(double current_time_days) {
     double unix_time = get_unix_from_epoch(current_time_days);
     double jd = (unix_time / 86400.0) + 2440587.5;
-    double D = jd - 2451545.0; 
+    double D_days = jd - 2451545.0; // days since J2000
 
-    double L = fmod(218.316 + 13.176396 * D, 360.0) * DEG2RAD;
-    double M = fmod(134.963 + 13.064993 * D, 360.0) * DEG2RAD;
-    double F = fmod(93.272 + 13.229350 * D, 360.0) * DEG2RAD;
+    // arguments needed later
+    double L_moon = fmod(218.316 + 13.176396 * D_days, 360.0) * DEG2RAD;
+    double M_moon = fmod(134.963 + 13.064993 * D_days, 360.0) * DEG2RAD;
+    double F_moon = fmod(93.272 + 13.229350 * D_days, 360.0) * DEG2RAD;
+    
+    // solar mean anomaly and lunar elongation hehe for perturbation calculations
+    double M_sun = fmod(357.528 + 0.9856003 * D_days, 360.0) * DEG2RAD;
+    double D_elong = fmod(297.850 + 12.190749 * D_days, 360.0) * DEG2RAD;
 
-    double lambda = L + (6.289 * DEG2RAD) * sin(M); 
-    double beta = (5.128 * DEG2RAD) * sin(F);       
-    double dist_km = 385000.0 - 20905.0 * cos(M);   
+    // she perturbate on my variation till I evect
+    double E = 1.0 - 0.002516 * cos(M_sun); 
+    double evection = 1.274 * DEG2RAD * sin(2.0 * D_elong - M_moon);
+    double variation = 0.658 * DEG2RAD * sin(2.0 * D_elong);
+    double annual_eq = -0.186 * DEG2RAD * E * sin(M_sun);
+    double parallactic = -0.035 * DEG2RAD * sin(D_elong);
 
+    // apply perturbations to longitude and distance
+    double lambda = L_moon + evection + variation + annual_eq + parallactic + 
+                    (6.289 * DEG2RAD) * sin(M_moon) + 
+                    (-0.059 * DEG2RAD) * sin(2.0 * D_elong + M_moon); 
+
+    double beta = (5.128 * DEG2RAD) * sin(F_moon) +
+                  (0.280 * DEG2RAD) * sin(F_moon + M_moon) +
+                  (0.277 * DEG2RAD) * sin(F_moon - M_moon) +
+                  (0.173 * DEG2RAD) * sin(2.0 * D_elong - F_moon);
+
+    double dist_km = 385001.0 - 20905.0 * cos(M_moon) - 3699.0 * cos(2.0 * D_elong - M_moon) - 2956.0 * cos(2.0 * D_elong);   
+
+    // ecliptic to ECI because that wouldn't worky whatsoever
     double x_ecl = dist_km * cos(beta) * cos(lambda);
     double y_ecl = dist_km * cos(beta) * sin(lambda);
     double z_ecl = dist_km * sin(beta);
 
-    double eps = 23.439 * DEG2RAD;
-    double x_eci = x_ecl;
-    double y_eci = y_ecl * cos(eps) - z_ecl * sin(eps);
-    double z_eci = y_ecl * sin(eps) + z_ecl * cos(eps);
+    // obliquity of the ecliptic (T is centuries since J2000)
+    double T = D_days / 36525.0;
+    double eps = (23.439291 - 0.0130042 * T) * DEG2RAD;
 
     Vector3 pos;
-    pos.x = (float)(x_eci);
-    pos.y = (float)(z_eci);
-    pos.z = (float)(-y_eci);
+    pos.x = (float)(x_ecl);
+    pos.y = (float)(y_ecl * sin(eps) + z_ecl * cos(eps));
+    pos.z = (float)-(y_ecl * cos(eps) - z_ecl * sin(eps));
 
     return pos;
 }
