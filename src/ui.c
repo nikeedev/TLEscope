@@ -47,6 +47,34 @@ static TLESource_t SOURCES[] = {
     {"25", "CubeSats", "https://celestrak.org/NORAD/elements/gp.php?GROUP=cubesat&FORMAT=tle"}
 };
 
+static TLESource_t RETLECTOR_SOURCES[] = {
+    {"1", "All active", "https://retlector.eu/tle/active"},
+    {"2", "100 Brightest", "https://retlector.eu/tle/visual"},
+    {"3", "Analyst satellites", "https://retlector.eu/tle/analyst"},
+    {"4", "Cosmos 1408 ASAT test debris", "https://retlector.eu/tle/cosmos-1408"},
+    {"5", "Fengyun-1C ASAT test debris", "https://retlector.eu/tle/fengyun-1c-debris"},
+    {"6", "Iridium 33 collision debris", "https://retlector.eu/tle/iridium-33-debris"},
+    {"7", "Cosmos 2251 collision debris", "https://retlector.eu/tle/cosmos-2251-debris"},
+    {"8", "Weather satellites", "https://retlector.eu/tle/weather"},
+    {"9", "NOAA satellites", "https://retlector.eu/tle/noaa"},
+    {"10", "GOES satellites", "https://retlector.eu/tle/goes"},
+    {"11", "Earth resources satellites", "https://retlector.eu/tle/resources"},
+    {"12", "SARSAT payload satellites", "https://retlector.eu/tle/sarsat"},
+    {"13", "Disaster monitoring satellites", "https://retlector.eu/tle/dmc"},
+    {"14", "TDRSS system", "https://retlector.eu/tle/tdrss"},
+    {"15", "Argos satellites", "https://retlector.eu/tle/argos"},
+    {"16", "Space stations", "https://retlector.eu/tle/station"},
+    {"17", "Geostationary satellites", "https://retlector.eu/tle/geo"},
+    {"18", "GNSS satellites", "https://retlector.eu/tle/gnss"},
+    {"19", "GPS operational satellites", "https://retlector.eu/tle/gps-ops"},
+    {"20", "GLONASS operational satellites", "https://retlector.eu/tle/glo-ops"},
+    {"21", "Galileo satellites", "https://retlector.eu/tle/galileo"},
+    {"22", "BeiDou satellites", "https://retlector.eu/tle/beidou"},
+    {"23", "SBAS satellites", "https://retlector.eu/tle/sbas"},
+    {"24", "Education satellites", "https://retlector.eu/tle/education"}
+};
+#define NUM_RETLECTOR_SOURCES 24
+
 /* ui state variables */
 static bool show_help = false;
 static bool show_settings = false;
@@ -78,8 +106,10 @@ static bool drag_tle_mgr = false;
 static Vector2 drag_tle_mgr_off = {0};
 static float tm_x = 250.0f, tm_y = 150.0f;
 static Vector2 tle_mgr_scroll = {0};
-static bool celestrak_expanded = true;
-static bool other_expanded = true;
+static bool celestrak_expanded = false;
+static bool retlector_expanded = false;
+static bool retlector_selected[NUM_RETLECTOR_SOURCES] = {false};
+static bool other_expanded = false;
 static bool celestrak_selected[25] = {false};
 static long data_tle_epoch = -1;
 
@@ -764,9 +794,12 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
                     if (strncmp(line, "# EPOCH:", 8) == 0) {
                         unsigned int mask = 0;
                         unsigned int cust_mask = 0;
+                        unsigned int ret_mask = 0;
                         
                         // parse with fallback
-                        if (strstr(line, "CUST_MASK:")) {
+                        if (strstr(line, "RET_MASK:")) {
+                            sscanf(line, "# EPOCH:%ld MASK:%u CUST_MASK:%u RET_MASK:%u", &data_tle_epoch, &mask, &cust_mask, &ret_mask);
+                        } else if (strstr(line, "CUST_MASK:")) {
                             sscanf(line, "# EPOCH:%ld MASK:%u CUST_MASK:%u", &data_tle_epoch, &mask, &cust_mask);
                         } else {
                             int cust_count = 0;
@@ -775,6 +808,9 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
                         
                         for (int i = 0; i < 25; i++) {
                             celestrak_selected[i] = (mask & (1 << i)) != 0;
+                        }
+                        for (int i = 0; i < NUM_RETLECTOR_SOURCES; i++) {
+                            retlector_selected[i] = (ret_mask & (1 << i)) != 0;
                         }
                         for (int i = 0; i < cfg->custom_tle_source_count; i++) {
                             cfg->custom_tle_sources[i].selected = (cust_mask & (1 << i)) != 0;
@@ -810,12 +846,22 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
                 unsigned int mask = 0;
                 for(int i=0; i<25; i++) if(celestrak_selected[i]) mask |= (1 << i);
                 
+                unsigned int ret_mask = 0;
+                for(int i=0; i<NUM_RETLECTOR_SOURCES; i++) if(retlector_selected[i]) ret_mask |= (1 << i);
+                
                 unsigned int cust_mask = 0;
                 for(int i=0; i<cfg->custom_tle_source_count; i++) if(cfg->custom_tle_sources[i].selected) cust_mask |= (1 << i);
 
-                fprintf(out, "# EPOCH:%ld MASK:%u CUST_MASK:%u\n", (long)time(NULL), mask, cust_mask);
+                fprintf(out, "# EPOCH:%ld MASK:%u CUST_MASK:%u RET_MASK:%u\n", (long)time(NULL), mask, cust_mask, ret_mask);
                 fclose(out);
                 
+                for (int i = 0; i < NUM_RETLECTOR_SOURCES; i++) {
+                    if (retlector_selected[i]) {
+                        char cmd[512];
+                        snprintf(cmd, sizeof(cmd), "curl -sL \"%s\" >> data.tle", RETLECTOR_SOURCES[i].url);
+                        system(cmd);
+                    }
+                }
                 for (int i = 0; i < 25; i++) {
                     if (celestrak_selected[i]) {
                         char cmd[512];
@@ -847,6 +893,8 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
 
         float total_height = 0;
         total_height += 28 * cfg->ui_scale;
+        if (retlector_expanded) total_height += NUM_RETLECTOR_SOURCES * 25 * cfg->ui_scale;
+        total_height += 28 * cfg->ui_scale;
         if (celestrak_expanded) total_height += 25 * 25 * cfg->ui_scale;
         total_height += 28 * cfg->ui_scale;
         if (other_expanded) total_height += cfg->custom_tle_source_count * 25 * cfg->ui_scale;
@@ -873,6 +921,28 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
         BeginScissorMode(viewRec.x, viewRec.y, viewRec.width, viewRec.height);
         float current_y = tm_y + 65*cfg->ui_scale + tle_mgr_scroll.y;
 
+        // RETLECTOR
+        Rectangle retlectorHead = { tm_x + 5*cfg->ui_scale + tle_mgr_scroll.x, current_y, viewRec.width - 10*cfg->ui_scale, 24*cfg->ui_scale };
+        if (CheckCollisionPointRec(GetMousePosition(), retlectorHead) && CheckCollisionPointRec(GetMousePosition(), viewRec)) {
+            DrawRectangleRec(retlectorHead, ApplyAlpha(cfg->ui_secondary, 0.4f));
+            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) retlector_expanded = !retlector_expanded;
+        } else {
+            DrawRectangleRec(retlectorHead, ApplyAlpha(cfg->ui_secondary, 0.15f));
+        }
+        DrawUIText(customFont, TextFormat("%s  RETLECTOR (Unrestricted)", retlector_expanded ? "v" : ">"), retlectorHead.x + 8*cfg->ui_scale, retlectorHead.y + 4*cfg->ui_scale, 16*cfg->ui_scale, cfg->ui_accent);
+        current_y += 28 * cfg->ui_scale;
+
+        if (retlector_expanded) {
+            for (int i = 0; i < NUM_RETLECTOR_SOURCES; i++) {
+                if (current_y + 25*cfg->ui_scale >= viewRec.y && current_y <= viewRec.y + viewRec.height) {
+                    Rectangle cbRec = { tm_x + 15*cfg->ui_scale + tle_mgr_scroll.x, current_y + 4*cfg->ui_scale, 16*cfg->ui_scale, 16*cfg->ui_scale };
+                    GuiCheckBox(cbRec, RETLECTOR_SOURCES[i].name, &retlector_selected[i]);
+                }
+                current_y += 25 * cfg->ui_scale;
+            }
+        }
+
+        // CELESTRAK
         Rectangle celestrakHead = { tm_x + 5*cfg->ui_scale + tle_mgr_scroll.x, current_y, viewRec.width - 10*cfg->ui_scale, 24*cfg->ui_scale };
         if (CheckCollisionPointRec(GetMousePosition(), celestrakHead) && CheckCollisionPointRec(GetMousePosition(), viewRec)) {
             DrawRectangleRec(celestrakHead, ApplyAlpha(cfg->ui_secondary, 0.4f));
@@ -880,7 +950,7 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
         } else {
             DrawRectangleRec(celestrakHead, ApplyAlpha(cfg->ui_secondary, 0.15f));
         }
-        DrawUIText(customFont, TextFormat("%s  CELESTRAK SOURCES", celestrak_expanded ? "v" : ">"), celestrakHead.x + 8*cfg->ui_scale, celestrakHead.y + 4*cfg->ui_scale, 16*cfg->ui_scale, cfg->ui_accent);
+        DrawUIText(customFont, TextFormat("%s  CELESTRAK (infrequent pulls only)", celestrak_expanded ? "v" : ">"), celestrakHead.x + 8*cfg->ui_scale, celestrakHead.y + 4*cfg->ui_scale, 16*cfg->ui_scale, cfg->ui_accent);
         current_y += 28 * cfg->ui_scale;
 
         if (celestrak_expanded) {
@@ -893,6 +963,7 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
             }
         }
 
+        // CUSTOM LIST
         Rectangle otherHead = { tm_x + 5*cfg->ui_scale + tle_mgr_scroll.x, current_y, viewRec.width - 10*cfg->ui_scale, 24*cfg->ui_scale };
         if (CheckCollisionPointRec(GetMousePosition(), otherHead) && CheckCollisionPointRec(GetMousePosition(), viewRec)) {
             DrawRectangleRec(otherHead, ApplyAlpha(cfg->ui_secondary, 0.4f));
@@ -900,7 +971,7 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
         } else {
             DrawRectangleRec(otherHead, ApplyAlpha(cfg->ui_secondary, 0.15f));
         }
-        DrawUIText(customFont, TextFormat("%s  CUSTOM SOURCES", other_expanded ? "v" : ">"), otherHead.x + 8*cfg->ui_scale, otherHead.y + 4*cfg->ui_scale, 16*cfg->ui_scale, cfg->ui_accent);
+        DrawUIText(customFont, TextFormat("%s  CUSTOM SOURCES (settings.json)", other_expanded ? "v" : ">"), otherHead.x + 8*cfg->ui_scale, otherHead.y + 4*cfg->ui_scale, 16*cfg->ui_scale, cfg->ui_accent);
         current_y += 28 * cfg->ui_scale;
 
         if (other_expanded) {

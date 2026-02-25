@@ -118,9 +118,11 @@ void load_tle_data(const char* filename) {
     /* Check for custom header to restore TLE Manager state */
     if (fgets(line0, sizeof(line0), file)) {
         if (strncmp(line0, "# EPOCH:", 8) == 0) {
-            unsigned int mask = 0, cust_mask = 0;
-            // scan past it, variables are unused here but keeps pointer advanced so ig whatever
-            if (strstr(line0, "CUST_MASK:")) {
+            unsigned int mask = 0, cust_mask = 0, ret_mask = 0;
+            // scan past it, variables are unused here but keeps pointer advanced
+            if (strstr(line0, "RET_MASK:")) {
+                sscanf(line0, "# EPOCH:%*d MASK:%u CUST_MASK:%u RET_MASK:%u", &mask, &cust_mask, &ret_mask);
+            } else if (strstr(line0, "CUST_MASK:")) {
                 sscanf(line0, "# EPOCH:%*d MASK:%u CUST_MASK:%u", &mask, &cust_mask);
             }
         } else {
