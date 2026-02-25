@@ -609,7 +609,7 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
 
         Vector2 textSize = MeasureTextEx(customFont, info, 14*cfg->ui_scale, 1.0f);
         float boxW = fmaxf(180*cfg->ui_scale, textSize.x + 20*cfg->ui_scale);
-        float boxH = textSize.y + 40*cfg->ui_scale; 
+        float boxH = textSize.y + 50*cfg->ui_scale;
 
         float boxX = screenPos.x + (15*cfg->ui_scale);
         float boxY = screenPos.y + (15*cfg->ui_scale);
