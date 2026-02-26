@@ -11,7 +11,7 @@
 #include <time.h>
 
 #define RAYGUI_IMPLEMENTATION
-#include "raygui.h"
+#include "../lib/raygui.h"
 
 typedef struct
 {

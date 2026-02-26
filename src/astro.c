@@ -10,7 +10,7 @@
 #include <time.h>
 
 #define CSGP4_IMPLEMENTATION
-#include "csgp4.h"
+#include "../lib/csgp4.h"
 
 #include <raymath.h>
 

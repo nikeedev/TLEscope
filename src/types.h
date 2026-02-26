@@ -1,8 +1,8 @@
 #ifndef TYPES_H
 #define TYPES_H
 
-#include "csgp4.h"
-#include <raylib.h>
+#include "../lib/csgp4.h"
+#include "raylib.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/types.h>
