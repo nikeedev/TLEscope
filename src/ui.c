@@ -1459,8 +1459,40 @@ void DrawGUI(UIContext* ctx, AppConfig* cfg, Font customFont) {
     }
 
     if (cfg->show_statistics) {
-        DrawUIText(customFont, TextFormat("%3i FPS", GetFPS()), GetScreenWidth() - (90*cfg->ui_scale), 10*cfg->ui_scale, 20*cfg->ui_scale, cfg->ui_accent);
-        DrawUIText(customFont, TextFormat("%i Sats", sat_count), GetScreenWidth() - (90*cfg->ui_scale), 34*cfg->ui_scale, 16*cfg->ui_scale, cfg->text_secondary);
+        // calculate dynamic values based on current simulation state
+        int active_render_count = 0;
+        int cached_count = 0;
+        for (int i = 0; i < sat_count; i++) {
+            if (satellites[i].is_active) {
+                active_render_count++;
+                if (satellites[i].orbit_cached) cached_count++;
+            }
+        }
+
+        int global_orbit_step = 1;
+        if (active_render_count > 10000) global_orbit_step = 100;
+        else if (active_render_count > 5000) global_orbit_step = 18;
+        else if (active_render_count > 2000) global_orbit_step = 8;
+        else if (active_render_count > 500) global_orbit_step = 4;
+        else if (active_render_count > 200) global_orbit_step = 2;
+
+        float stats_x = 10 * cfg->ui_scale;
+        
+        // UI Statistics
+        DrawUIText(customFont, TextFormat("%3i FPS", GetFPS()), stats_x, 10 * cfg->ui_scale, 20 * cfg->ui_scale, cfg->ui_accent);
+        DrawUIText(customFont, TextFormat("%i Sats (%i active)", sat_count, active_render_count), stats_x, 34 * cfg->ui_scale, 16 * cfg->ui_scale, cfg->text_secondary);
+        DrawUIText(customFont, TextFormat("Orbit Step: %i", global_orbit_step), stats_x, 52 * cfg->ui_scale, 16 * cfg->ui_scale, cfg->text_secondary);
+        DrawUIText(customFont, TextFormat("Cache: %i/%i", cached_count, active_render_count), stats_x, 70 * cfg->ui_scale, 16 * cfg->ui_scale, cfg->text_secondary);
+        
+        size_t sat_mem = sat_count * sizeof(Satellite);
+        DrawUIText(customFont, TextFormat("Mem: %.2f MB", sat_mem / (1024.0f * 1024.0f)), stats_x, 88 * cfg->ui_scale, 16 * cfg->ui_scale, cfg->text_secondary);
+
+        int prop_per_sec = GetFPS() * 50; // based on the 50-sat async step in main.c
+        DrawUIText(customFont, TextFormat("Prop Rate: %i/s", prop_per_sec), stats_x, 106 * cfg->ui_scale, 14 * cfg->ui_scale, cfg->text_secondary);
+
+        Vector3 sun_pos = calculate_sun_position(*ctx->current_epoch);
+        DrawUIText(customFont, TextFormat("GMST: %.4f deg", ctx->gmst_deg), stats_x, 128 * cfg->ui_scale, 14 * cfg->ui_scale, cfg->ui_accent);
+        DrawUIText(customFont, TextFormat("Sun ECI: %.3f, %.3f, %.3f", sun_pos.x, sun_pos.y, sun_pos.z), stats_x, 144 * cfg->ui_scale, 14 * cfg->ui_scale, cfg->ui_accent);
     }
 
     if (*ctx->time_multiplier == 1.0 && fabs(*ctx->current_epoch - get_current_real_time_epoch()) < (5.0 / 86400.0) && !*ctx->is_auto_warping) {

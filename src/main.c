@@ -597,8 +597,8 @@ int main(void) {
         }
 
         int global_orbit_step = 1;
-        if (active_render_count > 10000) global_orbit_step = 24;
-        else if (active_render_count > 5000) global_orbit_step = 18;
+        if (active_render_count > 13000) global_orbit_step = 54;
+        else if (active_render_count > 5000) global_orbit_step = 24;
         else if (active_render_count > 2000) global_orbit_step = 8;
         else if (active_render_count > 500) global_orbit_step = 4;
         else if (active_render_count > 200) global_orbit_step = 2;
