@@ -224,7 +224,7 @@ static Mesh GenEarthMesh(float radius, int slices, int rings) {
 }
 
 /* render orbit lines in 3d space */
-static void draw_orbit_3d(Satellite* sat, double current_epoch, bool is_highlighted, float alpha) {
+static void draw_orbit_3d(Satellite* sat, double current_epoch, bool is_highlighted, float alpha, int step) {
     Color orbitColor = ApplyAlpha(is_highlighted ? cfg.orbit_highlighted : cfg.orbit_normal, alpha);
 
     if (is_highlighted) {
@@ -254,10 +254,13 @@ static void draw_orbit_3d(Satellite* sat, double current_epoch, bool is_highligh
     } else {
         if (!sat->orbit_cached) return;
         Vector3 prev_pos = sat->orbit_cache[0];
-        for (int i = 1; i < ORBIT_CACHE_SIZE; i++) {
+        for (int i = step; i < ORBIT_CACHE_SIZE; i += step) {
             Vector3 pos = sat->orbit_cache[i];
             DrawLine3D(prev_pos, pos, orbitColor);
             prev_pos = pos;
+        }
+        if ((ORBIT_CACHE_SIZE - 1) % step != 0) {
+            DrawLine3D(prev_pos, sat->orbit_cache[ORBIT_CACHE_SIZE - 1], orbitColor);
         }
     }
 }
@@ -585,11 +588,20 @@ int main(void) {
         double current_unix = get_unix_from_epoch(current_epoch);
 
         /* update current positions of all active sats */
+        int active_render_count = 0;
         for (int i = 0; i < sat_count; i++) {
             if (!satellites[i].is_active) continue;
             if (hide_unselected && selected_sat != NULL && &satellites[i] != selected_sat) continue;
             satellites[i].current_pos = calculate_position(&satellites[i], current_unix);
+            active_render_count++;
         }
+
+        int global_orbit_step = 1;
+        if (active_render_count > 10000) global_orbit_step = 24;
+        else if (active_render_count > 5000) global_orbit_step = 18;
+        else if (active_render_count > 2000) global_orbit_step = 8;
+        else if (active_render_count > 500) global_orbit_step = 4;
+        else if (active_render_count > 200) global_orbit_step = 2;
 
         /* fading logic for selection isolation */
         bool should_hide = (hide_unselected && selected_sat != NULL);
@@ -1086,7 +1098,7 @@ int main(void) {
                     if (sat_alpha <= 0.0f) continue;
 
                     bool is_hl = (active_sat == &satellites[i]);
-                    draw_orbit_3d(&satellites[i], current_epoch, is_hl, sat_alpha);
+                    draw_orbit_3d(&satellites[i], current_epoch, is_hl, sat_alpha, global_orbit_step);
 
                     if (is_hl) {
                         Vector3 draw_pos = Vector3Scale(satellites[i].current_pos, 1.0f / DRAW_SCALE);
