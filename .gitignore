@@ -4,6 +4,8 @@ bin/
 build/
 dist/
 
+.vscode
+
 # Dynamic Files With Dynamic Data or PIIs
 /date.tle
 /settings.json
