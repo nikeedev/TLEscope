@@ -15,6 +15,7 @@
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 #ifdef __cplusplus
 #define CSGP4_OUT *
@@ -253,7 +254,7 @@ CSGP4_DECORATOR double ConvertEpochYearAndDayToUnix( int epochYear, double epoch
 CSGP4_DECORATOR int ParseFileOrString( FILE * f, const char * sLineSet, struct TLEObject ** objects, int * numObjects )
 {
 	int i;
-	ssize_t s;
+	size_t s;
 	char line[256];
 	int lineno = 0;
 
