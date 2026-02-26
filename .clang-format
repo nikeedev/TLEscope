@@ -1,0 +1,22 @@
+---
+BasedOnStyle: Microsoft
+UseTab: Never
+IndentWidth: 4
+TabWidth: 4
+
+---
+Language: C
+DerivePointerAlignment: false
+PointerAlignment: Right
+AlignAfterOpenBracket: BlockIndent
+BraceWrapping:
+  AfterNamespace: true
+  AfterCaseLabel: true
+  BeforeLambdaBody: true
+NamespaceIndentation: All
+BreakTemplateDeclarations: Yes
+AllowShortBlocksOnASingleLine: Always
+AllowShortFunctionsOnASingleLine: All
+IndentCaseBlocks: False
+AccessModifierOffset: -4
+ColumnLimit: 200
