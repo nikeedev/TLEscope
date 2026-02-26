@@ -3,7 +3,7 @@
 
 #include "types.h"
 
-void LoadAppConfig(const char* filename, AppConfig* config);
-void SaveAppConfig(const char* filename, AppConfig* config);
+void LoadAppConfig(const char *filename, AppConfig *config);
+void SaveAppConfig(const char *filename, AppConfig *config);
 
 #endif // CONFIG_H
