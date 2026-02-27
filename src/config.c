@@ -37,6 +37,7 @@ void LoadAppConfig(const char *filename, AppConfig *config)
     config->show_statistics = false;  // default
     config->highlight_sunlit = false; // default
     config->show_slant_range = false; // default
+    config->show_scattering = false; // default
     config->custom_tle_source_count = 0;
 
     if (FileExists(filename))
@@ -171,6 +172,18 @@ void LoadAppConfig(const char *filename, AppConfig *config)
                 if (true_ptr && (!comma || true_ptr < comma))
                 {
                     config->show_slant_range = true;
+                }
+            }
+
+            // parse scattering toggle
+            char *sscat_ptr = strstr(text, "\"show_scattering\"");
+            if (sscat_ptr)
+            {
+                char *comma = strchr(sscat_ptr, ',');
+                char *true_ptr = strstr(sscat_ptr, "true");
+                if (true_ptr && (!comma || true_ptr < comma))
+                {
+                    config->show_scattering = true;
                 }
             }
 
@@ -387,6 +400,7 @@ void SaveAppConfig(const char *filename, AppConfig *config)
     fprintf(file, "    \"show_statistics\": %s,\n", config->show_statistics ? "true" : "false");
     fprintf(file, "    \"highlight_sunlit\": %s,\n", config->highlight_sunlit ? "true" : "false");
     fprintf(file, "    \"show_slant_range\": %s,\n", config->show_slant_range ? "true" : "false");
+    fprintf(file, "    \"show_scattering\": %s,\n", config->show_scattering ? "true" : "false");
 
     if (config->custom_tle_source_count > 0)
     {

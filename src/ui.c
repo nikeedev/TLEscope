@@ -317,7 +317,7 @@ static void FindSmartWindowPosition(float w, float h, AppConfig *cfg, float *out
     if (show_help)
         active[count++] = (Rectangle){hw_x, hw_y, 900 * cfg->ui_scale, 140 * cfg->ui_scale};
     if (show_settings)
-        active[count++] = (Rectangle){sw_x, sw_y, 250 * cfg->ui_scale, 440 * cfg->ui_scale};
+        active[count++] = (Rectangle){sw_x, sw_y, 250 * cfg->ui_scale, 465 * cfg->ui_scale};
     if (show_time_dialog)
         active[count++] = (Rectangle){td_x, td_y, 252 * cfg->ui_scale, 320 * cfg->ui_scale};
     if (show_passes_dialog)
@@ -390,7 +390,7 @@ bool IsMouseOverUI(AppConfig *cfg)
 
     if (show_help && CheckCollisionPointRec(GetMousePosition(), (Rectangle){hw_x, hw_y, 900 * cfg->ui_scale, 140 * cfg->ui_scale}))
         over_window = true;
-    if (show_settings && CheckCollisionPointRec(GetMousePosition(), (Rectangle){sw_x, sw_y, 250 * cfg->ui_scale, 440 * cfg->ui_scale}))
+    if (show_settings && CheckCollisionPointRec(GetMousePosition(), (Rectangle){sw_x, sw_y, 250 * cfg->ui_scale, 465 * cfg->ui_scale}))
         over_window = true;
     if (show_time_dialog && CheckCollisionPointRec(GetMousePosition(), (Rectangle){td_x, td_y, 252 * cfg->ui_scale, 320 * cfg->ui_scale}))
         over_window = true;
@@ -618,7 +618,7 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
 
     /* calculate interactive window rects */
     Rectangle helpWindow = {hw_x, hw_y, 900 * cfg->ui_scale, 140 * cfg->ui_scale};
-    Rectangle settingsWindow = {sw_x, sw_y, 250 * cfg->ui_scale, 440 * cfg->ui_scale};
+    Rectangle settingsWindow = {sw_x, sw_y, 250 * cfg->ui_scale, 465 * cfg->ui_scale};
     Rectangle timeWindow = {td_x, td_y, 252 * cfg->ui_scale, 320 * cfg->ui_scale};
     Rectangle tleWindow = {(GetScreenWidth() - 300 * cfg->ui_scale) / 2.0f, (GetScreenHeight() - 130 * cfg->ui_scale) / 2.0f, 300 * cfg->ui_scale, 130 * cfg->ui_scale};
     Rectangle passesWindow = {pd_x, pd_y, 357 * cfg->ui_scale, 380 * cfg->ui_scale};
@@ -781,17 +781,24 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
         selected_pass_idx = found_idx;
     }
 
+    static char last_hl_name[64] = "";
+
     if (!edit_hl_lat && !edit_hl_lon && !edit_hl_alt && !edit_hl_name)
     {
-        if (home_location.lat != last_hl_lat || home_location.lon != last_hl_lon || home_location.alt != last_hl_alt)
+        if (home_location.lat != last_hl_lat || home_location.lon != last_hl_lon || 
+            home_location.alt != last_hl_alt || strcmp(home_location.name, last_hl_name) != 0)
         {
             sprintf(text_hl_lat, "%.4f", home_location.lat);
             sprintf(text_hl_lon, "%.4f", home_location.lon);
             sprintf(text_hl_alt, "%.4f", home_location.alt);
             strncpy(text_hl_name, home_location.name, 63);
+            text_hl_name[63] = '\0';
+            
             last_hl_lat = home_location.lat;
             last_hl_lon = home_location.lon;
             last_hl_alt = home_location.alt;
+            strncpy(last_hl_name, home_location.name, 63);
+            last_hl_name[63] = '\0';
         }
     }
 
@@ -982,7 +989,7 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
     {
         if (!show_settings && !opened_once_settings)
         {
-            FindSmartWindowPosition(250 * cfg->ui_scale, 440 * cfg->ui_scale, cfg, &sw_x, &sw_y);
+            FindSmartWindowPosition(250 * cfg->ui_scale, 465 * cfg->ui_scale, cfg, &sw_x, &sw_y);
             opened_once_settings = true;
         }
         show_settings = !show_settings;
@@ -1588,6 +1595,8 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
             GuiCheckBox((Rectangle){sw_x + 10 * cfg->ui_scale, sy, 20 * cfg->ui_scale, 20 * cfg->ui_scale}, "Night Lights", &cfg->show_night_lights);
             sy += 25 * cfg->ui_scale;
             GuiCheckBox((Rectangle){sw_x + 10 * cfg->ui_scale, sy, 20 * cfg->ui_scale, 20 * cfg->ui_scale}, "Show Markers", &cfg->show_markers);
+            sy += 25 * cfg->ui_scale;
+            GuiCheckBox((Rectangle){sw_x + 10 * cfg->ui_scale, sy, 20 * cfg->ui_scale, 20 * cfg->ui_scale}, "Scattering", &cfg->show_scattering);
             sy += 30 * cfg->ui_scale;
 
             DrawLine(sw_x + 10 * cfg->ui_scale, sy, sw_x + settingsWindow.width - 10 * cfg->ui_scale, sy, cfg->ui_secondary);

@@ -62,7 +62,7 @@ extern Marker home_location;
 extern Marker markers[MAX_MARKERS];
 extern int marker_count;
 
-// visual settings and colors
+/* visual settings and colors */ 
 typedef struct
 {
     char theme[64];
@@ -77,7 +77,8 @@ typedef struct
     bool show_markers;
     bool show_statistics;
     bool highlight_sunlit;
-    bool show_slant_range; // added slant range toggle
+    bool show_slant_range;
+    bool show_scattering;
 
     CustomTLESource custom_tle_sources[MAX_CUSTOM_TLE_SOURCES];
     int custom_tle_source_count;
