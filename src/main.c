@@ -37,8 +37,8 @@ const char *fs3D = "#version 330\n"
                    "    vec3 viewDir = normalize(viewPos - fragPos);\n"
                    "    float NdotV = max(dot(normal, viewDir), 0.0);\n"
                    "    float scatterMult = smoothstep(-0.2, 0.2, intensity) * smoothstep(0.2, -0.2, intensity);\n"
-                   "    vec3 sunsetColor = vec3(1.0, 0.45, 0.15);\n"
-                   "    vec3 scatteredDay = mix(day.rgb, day.rgb * sunsetColor * 2.5, scatterMult * (1.0 - NdotV));\n"
+                   "    vec3 sunsetColor = vec3(1.0, 0.5, 0.2);\n"
+                   "    vec3 scatteredDay = mix(day.rgb, day.rgb * sunsetColor * 2.0, scatterMult * (1.0 - NdotV));\n"
                    "    vec3 hazeColor = mix(vec3(0.15, 0.35, 0.75), sunsetColor, scatterMult);\n"
                    "    float surfaceHaze = pow(1.0 - NdotV, 2.5) * smoothstep(-0.1, 0.2, intensity) * 0.55;\n"
                    "    scatteredDay = mix(scatteredDay, hazeColor, surfaceHaze);\n"
@@ -180,10 +180,10 @@ const char *fsAtmosphere3D = "#version 330\n"
                        "    float NdotL = dot(normal, sunDir);\n"
                        "    \n"
                        "    vec3 dayColor = vec3(0.3, 0.6, 1.0);\n"
-                       "    vec3 sunsetColor = vec3(1.0, 0.45, 0.15); // Sunset orange\n"
+                       "    vec3 sunsetColor = vec3(1.0, 0.5, 0.2); // Realistic gold-orange\n"
                        "    \n"
                        "    // shift to sunset colors near the terminator\n"
-                       "    float sunsetBlend = smoothstep(0.2, -0.1, NdotL);\n"
+                       "    float sunsetBlend = smoothstep(0.6, -0.15, NdotL);\n"
                        "    vec3 atmosColor = mix(dayColor, sunsetColor, sunsetBlend);\n"
                        "    \n"
                        "    // fresnel for soft edge glow\n"
@@ -303,7 +303,7 @@ static void draw_orbit_3d(Satellite *sat, double current_epoch, bool is_highligh
 
         for (int i = 0; i <= segments; i++)
         {
-            double t = current_epoch + (i * time_step);
+            double t = (i == 0) ? current_epoch : (current_epoch - fmod(current_epoch, time_step) + (i * time_step));
             double t_unix = get_unix_from_epoch(t);
             Vector3 raw_pos = calculate_position(sat, t_unix);
             Vector3 pos = Vector3Scale(raw_pos, 1.0f / DRAW_SCALE);
@@ -1155,7 +1155,7 @@ int main(void)
 
                         for (int j = 0; j <= segments; j++)
                         {
-                            double t = current_epoch + (j * time_step);
+                            double t = (j == 0) ? current_epoch : (current_epoch - fmod(current_epoch, time_step) + (j * time_step));
                             double t_unix = get_unix_from_epoch(t);
                             Vector3 raw_pos = calculate_position(&satellites[i], t_unix);
                             get_map_coordinates(raw_pos, epoch_to_gmst(t), cfg.earth_rotation_offset, map_w, map_h, &track_pts[j].x, &track_pts[j].y);

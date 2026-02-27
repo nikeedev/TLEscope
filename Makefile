@@ -26,6 +26,7 @@ linux: bin/TLEscope
 	cp data.tle $(DIST_LINUX)/ 2>/dev/null || true
 	cp logo*.png $(DIST_LINUX)/ 2>/dev/null || true
 	@echo "Linux build bundled in $(DIST_LINUX)/, do not run bin/*"
+	@echo "Here's your subshell command to run it! (cd $(DIST_LINUX)/ && ./TLEscope)"
 
 windows: bin/TLEscope.exe
 	@mkdir -p $(DIST_WIN)
