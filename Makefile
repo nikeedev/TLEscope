@@ -41,6 +41,8 @@ windows: bin/TLEscope.exe
 	cp /usr/x86_64-w64-mingw32/bin/libidn2*.dll $(DIST_WIN)/ 2>/dev/null || true
 	cp /usr/x86_64-w64-mingw32/bin/libunistring*.dll $(DIST_WIN)/ 2>/dev/null || true
 	cp /usr/x86_64-w64-mingw32/bin/libnghttp2*.dll $(DIST_WIN)/ 2>/dev/null || true
+	cp /usr/x86_64-w64-mingw32/bin/libnghttp3*.dll $(DIST_WIN)/ 2>/dev/null || true
+	cp /usr/x86_64-w64-mingw32/bin/libngtcp2*.dll $(DIST_WIN)/ 2>/dev/null || true
 	cp /usr/x86_64-w64-mingw32/bin/libssh2*.dll $(DIST_WIN)/ 2>/dev/null || true
 	cp /usr/x86_64-w64-mingw32/bin/libgcc_s_seh*.dll $(DIST_WIN)/ 2>/dev/null || true
 	cp /usr/x86_64-w64-mingw32/bin/libwinpthread*.dll $(DIST_WIN)/ 2>/dev/null || true
