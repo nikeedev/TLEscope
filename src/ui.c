@@ -1057,8 +1057,12 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
         DrawRectangleLinesEx(bgRec, 1.0f, cfg->ui_secondary);
         Color titleColor = (ctx->active_sat == ctx->hovered_sat) ? cfg->sat_highlighted : cfg->sat_selected;
 
+        char sat_id_line[16]; /* 00900U 64063C */
+        snprintf(sat_id_line, sizeof(sat_id_line), "%.6s %.8s", ctx->active_sat->norad_id, ctx->active_sat->intl_designator);
+
         DrawUIText(customFont, ctx->active_sat->name, boxX + padX, boxY + (10.0f * cfg->ui_scale), titleFontSize, titleColor);
-        DrawUIText(customFont, info, boxX + padX, boxY + (38.0f * cfg->ui_scale), infoFontSize, cfg->text_main);
+        DrawUIText(customFont, sat_id_line, boxX + padX, boxY + (28.0f * cfg->ui_scale), infoFontSize, cfg->text_main);
+        DrawUIText(customFont, info, boxX + padX, boxY + (48.0f * cfg->ui_scale), infoFontSize, cfg->text_main);
 
         Vector2 periScreen, apoScreen;
         bool show_peri = true, show_apo = true;
