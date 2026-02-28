@@ -518,6 +518,7 @@ void CalculatePasses(Satellite *sat, double start_epoch)
                     double step = (current_pass.los_epoch - current_pass.aos_epoch) / 399.0;
                     if (step > 0)
                     {
+                        current_pass.max_el = -90.0f; // reset to find true max during high-res pass
                         for (int k = 0; k < 400; k++)
                         {
                             double pt = current_pass.aos_epoch + k * step;
@@ -526,6 +527,13 @@ void CalculatePasses(Satellite *sat, double start_epoch)
                             double p_az, p_el;
                             get_az_el(calculate_position(current_sat, pt_unix), p_gmst, home_location.lat, home_location.lon, home_location.alt, &p_az, &p_el);
                             current_pass.path_pts[current_pass.num_pts++] = (Vector2){(float)p_az, (float)p_el};
+                            
+                            // Absolutely ensure max elevation is pinpointed precisely
+                            if (p_el > current_pass.max_el)
+                            {
+                                current_pass.max_el = (float)p_el;
+                                current_pass.max_el_epoch = pt;
+                            }
                         }
                     }
                     passes[num_passes++] = current_pass;
