@@ -10,7 +10,7 @@ SRC       = src/main.c src/astro.c src/config.c src/ui.c
 OBJ       = $(SRC:src/%.c=build/%.o)
 
 LDFLAGS_LIN = $(LIB_LIN_PATH) -lraylib -lcurl -lGL -lm -lpthread -ldl -lrt -lX11
-LDFLAGS_WIN = $(LIB_WIN_PATH) -lraylib -Wl,-Bstatic -lcurl -lnghttp2 -lssl -lcrypto -lssh2 -lz -lbrotlidec -lbrotlicommon -lidn2 -lpsl -lunistring -liconv -lssp_nonshared -Wl,-Bdynamic -lzstd -lbcrypt -lwldap32 -lws2_32 -lcrypt32 -lopengl32 -lgdi32 -lwinmm -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive,--allow-multiple-definition -mwindows
+LDFLAGS_WIN = $(LIB_WIN_PATH) -lraylib -Wl,-Bstatic -lcurl -lnghttp2 -lnghttp3 -lngtcp2 -lngtcp2_crypto_openssl -lssl -lcrypto -lssh2 -lz -lbrotlidec -lbrotlicommon -lidn2 -lpsl -lunistring -liconv -lssp_nonshared -Wl,-Bdynamic -lzstd -lbcrypt -lwldap32 -lws2_32 -lcrypt32 -lsecur32 -liphlpapi -lopengl32 -lgdi32 -lwinmm -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive,--allow-multiple-definition -mwindows
 DIST_LINUX = dist/TLEscope-Linux
 DIST_WIN   = dist/TLEscope-Windows
 

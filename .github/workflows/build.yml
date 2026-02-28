@@ -56,6 +56,11 @@ jobs:
             make
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-curl
+            mingw-w64-x86_64-ngtcp2
+            mingw-w64-x86_64-nghttp3
+            mingw-w64-x86_64-zstd
+            mingw-w64-x86_64-libssh2
+            mingw-w64-x86_64-openssl
             mingw-w64-x86_64-zstd
             mingw-w64-x86_64-libssh2
             mingw-w64-x86_64-openssl
