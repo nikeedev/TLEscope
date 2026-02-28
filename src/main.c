@@ -600,6 +600,7 @@ int main(void)
     double auto_warp_target = 0.0;
     double auto_warp_initial_diff = 0.0;
     bool exit_app = false;
+    bool is_ecliptic_frame = false;
 
     Satellite *hovered_sat = NULL;
     Satellite *selected_sat = NULL;
@@ -981,9 +982,22 @@ int main(void)
 
         if (!is_2d_view)
         {
-            Camera3DParams.position.x = Camera3DParams.target.x + camDistance * cosf(camAngleY) * sinf(camAngleX);
-            Camera3DParams.position.y = Camera3DParams.target.y + camDistance * sinf(camAngleY);
-            Camera3DParams.position.z = Camera3DParams.target.z + camDistance * cosf(camAngleY) * cosf(camAngleX);
+            Vector3 offset = {
+                camDistance * cosf(camAngleY) * sinf(camAngleX),
+                camDistance * sinf(camAngleY),
+                camDistance * cosf(camAngleY) * cosf(camAngleX)
+            };
+            Vector3 upVec = {0.0f, 1.0f, 0.0f};
+
+            if (is_ecliptic_frame)
+            {
+                Matrix rot = MatrixRotateX(23.439f * DEG2RAD);
+                offset = Vector3Transform(offset, rot);
+                upVec = Vector3Transform(upVec, rot);
+            }
+
+            Camera3DParams.position = Vector3Add(Camera3DParams.target, offset);
+            Camera3DParams.up = upVec;
         }
 
         Satellite *active_sat = hovered_sat ? hovered_sat : selected_sat;
@@ -1583,6 +1597,7 @@ int main(void)
             .is_2d_view = &is_2d_view,
             .hide_unselected = &hide_unselected,
             .picking_home = &picking_home,
+            .is_ecliptic_frame = &is_ecliptic_frame,
             .selected_sat = &selected_sat,
             .hovered_sat = hovered_sat,
             .active_sat = active_sat,

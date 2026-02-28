@@ -414,7 +414,7 @@ bool IsMouseOverUI(AppConfig *cfg)
         return true;
 
     float center_x_bottom = (GetScreenWidth() - (5 * 35 - 5) * cfg->ui_scale) / 2.0f;
-    float center_x_top = (GetScreenWidth() - (9 * 35 - 5) * cfg->ui_scale) / 2.0f;
+    float center_x_top = (GetScreenWidth() - (10 * 35 - 5) * cfg->ui_scale) / 2.0f;
 
     Rectangle btnRecs[] = {
         {center_x_top, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
@@ -426,13 +426,14 @@ bool IsMouseOverUI(AppConfig *cfg)
         {center_x_top + 210 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
         {center_x_top + 245 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
         {center_x_top + 280 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
+        {center_x_top + 315 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
         {center_x_bottom, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
         {center_x_bottom + 35 * cfg->ui_scale, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
         {center_x_bottom + 70 * cfg->ui_scale, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
         {center_x_bottom + 105 * cfg->ui_scale, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
         {center_x_bottom + 140 * cfg->ui_scale, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale}
     };
-    for (int i = 0; i < 14; i++)
+    for (int i = 0; i < 15; i++)
     {
         if (CheckCollisionPointRec(GetMousePosition(), btnRecs[i]))
             return true;
@@ -948,7 +949,7 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
     float buttons_w = (5 * 35 - 5) * cfg->ui_scale;
     float center_x_bottom = (GetScreenWidth() - buttons_w) / 2.0f;
     float btn_start_x = center_x_bottom;
-    float center_x_top = (GetScreenWidth() - (9 * 35 - 5) * cfg->ui_scale) / 2.0f;
+    float center_x_top = (GetScreenWidth() - (10 * 35 - 5) * cfg->ui_scale) / 2.0f;
 
     Rectangle btnSet = {center_x_top, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
     Rectangle btnHelp = {center_x_top + 35 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
@@ -959,6 +960,7 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
     Rectangle btnTLEMgr = {center_x_top + 210 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
     Rectangle btnSunlit = {center_x_top + 245 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
     Rectangle btnSlantRange = {center_x_top + 280 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
+    Rectangle btnFrame = {center_x_top + 315 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
     Rectangle btnRewind = {btn_start_x, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
     Rectangle btnPlayPause = {btn_start_x + 35 * cfg->ui_scale, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
     Rectangle btnFastForward = {btn_start_x + 70 * cfg->ui_scale, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
@@ -1054,6 +1056,11 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
     HIGHLIGHT_START(cfg->show_slant_range)
     if (GuiButton(btnSlantRange, "#34#"))
         cfg->show_slant_range = !cfg->show_slant_range;
+    HIGHLIGHT_END()
+
+    HIGHLIGHT_START(*ctx->is_ecliptic_frame)
+    if (GuiButton(btnFrame, *ctx->is_ecliptic_frame ? "#104#" : "#105#"))
+        *ctx->is_ecliptic_frame = !*ctx->is_ecliptic_frame;
     HIGHLIGHT_END()
 
     if (GuiButton(btnRewind, "#118#"))
@@ -2208,7 +2215,7 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
         GetScreenHeight() - 35 * cfg->ui_scale, 20 * cfg->ui_scale, cfg->text_main
     );
 
-    const char *tt_texts[14] = {
+    const char *tt_texts[15] = {
         "Settings",
         "Help & Controls",
         "Toggle 2D/3D View",
@@ -2218,6 +2225,7 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
         "TLE Manager",
         "Highlight Sunlit Orbits",
         "Slant Range Line",
+        "Toggle Frame (ECI/Ecliptic)",
         "Slower / Reverse",
         "Play / Pause",
         "Faster",
@@ -2225,10 +2233,10 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
         "Set Date & Time"
     };
 
-    for (int i = 0; i < 14; i++)
+    for (int i = 0; i < 15; i++)
     {
         if (top_hovered_wnd == -1 && CheckCollisionPointRec(
-                                         GetMousePosition(), (Rectangle[]){btnSet, btnHelp, btn2D3D, btnSatMgr, btnHideUnselected, btnPasses, btnTLEMgr, btnSunlit, btnSlantRange, btnRewind,
+                                         GetMousePosition(), (Rectangle[]){btnSet, btnHelp, btn2D3D, btnSatMgr, btnHideUnselected, btnPasses, btnTLEMgr, btnSunlit, btnSlantRange, btnFrame, btnRewind,
                                                                            btnPlayPause, btnFastForward, btnNow, btnClock}[i]
                                      ))
         {

@@ -25,6 +25,7 @@ typedef struct
     bool *hide_unselected;
     bool *picking_home;
     bool *exit_app;
+    bool *is_ecliptic_frame;
     Satellite **selected_sat;
     Satellite *hovered_sat;
     Satellite *active_sat;
