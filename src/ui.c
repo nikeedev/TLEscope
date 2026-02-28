@@ -195,8 +195,159 @@ static char text_hl_alt[32] = "";
 static bool edit_hl_name = false, edit_hl_lat = false, edit_hl_lon = false, edit_hl_alt = false;
 static float last_hl_lat = -999, last_hl_lon = -999, last_hl_alt = -999;
 
-static float tt_hover[13] = {0};
+static bool polar_lunar_mode = false;
+static double lunar_aos = 0.0;
+static double lunar_los = 0.0;
+static Vector2 lunar_path_pts[100];
+static int lunar_num_pts = 0;
+static double last_lunar_calc_time = 0.0;
+
+static float tt_hover[16] = {0};
 static bool ui_initialized = false;
+static bool show_first_run_dialog = false;
+static char text_fps[8] = "";
+static bool edit_fps = false;
+
+static void LoadTLEState(AppConfig *cfg)
+{
+    if (data_tle_epoch != -1) return;
+    FILE *f = fopen("data.tle", "r");
+    if (f)
+    {
+        char line[256];
+        if (fgets(line, sizeof(line), f))
+        {
+            if (strncmp(line, "# EPOCH:", 8) == 0)
+            {
+                unsigned int mask = 0, cust_mask = 0, ret_mask = 0;
+                if (strstr(line, "RET_MASK:"))
+                    sscanf(line, "# EPOCH:%ld MASK:%u CUST_MASK:%u RET_MASK:%u", &data_tle_epoch, &mask, &cust_mask, &ret_mask);
+                else if (strstr(line, "CUST_MASK:"))
+                    sscanf(line, "# EPOCH:%ld MASK:%u CUST_MASK:%u", &data_tle_epoch, &mask, &cust_mask);
+                else
+                {
+                    int cust_count = 0;
+                    sscanf(line, "# EPOCH:%ld MASK:%u CUST:%d", &data_tle_epoch, &mask, &cust_count);
+                }
+
+                for (int i = 0; i < 25; i++)
+                    celestrak_selected[i] = (mask & (1 << i)) != 0;
+                for (int i = 0; i < NUM_RETLECTOR_SOURCES; i++)
+                    retlector_selected[i] = (ret_mask & (1 << i)) != 0;
+                for (int i = 0; i < cfg->custom_tle_source_count; i++)
+                    cfg->custom_tle_sources[i].selected = (cust_mask & (1 << i)) != 0;
+            }
+        }
+        fclose(f);
+    }
+    if (data_tle_epoch == -1) data_tle_epoch = 0;
+}
+
+static void PullTLEData(UIContext *ctx, AppConfig *cfg)
+{
+    FILE *out = fopen("data.tle", "w");
+    if (out)
+    {
+        unsigned int mask = 0, ret_mask = 0, cust_mask = 0;
+        for (int i = 0; i < 25; i++)
+            if (celestrak_selected[i]) mask |= (1 << i);
+        for (int i = 0; i < NUM_RETLECTOR_SOURCES; i++)
+            if (retlector_selected[i]) ret_mask |= (1 << i);
+        for (int i = 0; i < cfg->custom_tle_source_count; i++)
+            if (cfg->custom_tle_sources[i].selected) cust_mask |= (1 << i);
+
+        fprintf(out, "# EPOCH:%ld MASK:%u CUST_MASK:%u RET_MASK:%u\n", (long)time(NULL), mask, cust_mask, ret_mask);
+        fclose(out);
+
+        for (int i = 0; i < NUM_RETLECTOR_SOURCES; i++)
+            if (retlector_selected[i])
+            {
+                char cmd[512];
+                snprintf(cmd, sizeof(cmd), "curl -sL --compressed \"%s\" >> data.tle", RETLECTOR_SOURCES[i].url);
+                system(cmd);
+            }
+        for (int i = 0; i < 25; i++)
+            if (celestrak_selected[i])
+            {
+                char cmd[512];
+                snprintf(cmd, sizeof(cmd), "curl -sL --compressed \"%s\" >> data.tle", SOURCES[i].url);
+                system(cmd);
+            }
+        for (int i = 0; i < cfg->custom_tle_source_count; i++)
+            if (cfg->custom_tle_sources[i].selected)
+            {
+                char cmd[512];
+                snprintf(cmd, sizeof(cmd), "curl -sL --compressed \"%s\" >> data.tle", cfg->custom_tle_sources[i].url);
+                system(cmd);
+            }
+
+        if (ctx)
+        {
+            *ctx->selected_sat = NULL;
+            ctx->hovered_sat = NULL;
+            ctx->active_sat = NULL;
+            *ctx->active_lock = LOCK_EARTH;
+        }
+        locked_pass_sat = NULL;
+        num_passes = 0;
+        last_pass_calc_sat = NULL;
+        sat_count = 0;
+        load_tle_data("data.tle");
+        if (sat_count > 500)
+        {
+            for (int i = 0; i < sat_count; i++)
+                satellites[i].is_active = false;
+        }
+        LoadSatSelection();
+        data_tle_epoch = time(NULL);
+    }
+}
+
+static void CalculateLunarPass(double base_epoch, double *aos, double *los, Vector2 *pts, int *num_pts)
+{
+    double step = 10.0 / 1440.0;
+    
+    double peak_time = base_epoch;
+    double max_el = -90;
+    for(double t = base_epoch - 0.5; t <= base_epoch + 0.5; t += step)
+    {
+        double az, el;
+        get_az_el(calculate_moon_position(t), epoch_to_gmst(t), home_location.lat, home_location.lon, home_location.alt, &az, &el);
+        if(el > max_el) { max_el = el; peak_time = t; }
+    }
+    
+    double found_aos = peak_time;
+    for(double t = peak_time; t >= peak_time - 0.6; t -= step)
+    {
+        double az, el;
+        get_az_el(calculate_moon_position(t), epoch_to_gmst(t), home_location.lat, home_location.lon, home_location.alt, &az, &el);
+        if(el < 0) { found_aos = t; break; }
+    }
+    
+    double found_los = peak_time;
+    for(double t = peak_time; t <= peak_time + 0.6; t += step)
+    {
+        double az, el;
+        get_az_el(calculate_moon_position(t), epoch_to_gmst(t), home_location.lat, home_location.lon, home_location.alt, &az, &el);
+        if(el < 0) { found_los = t; break; }
+    }
+    
+    *aos = found_aos;
+    *los = found_los;
+    *num_pts = 0;
+    double pt_step = (*los - *aos) / 99.0;
+    if (pt_step > 0)
+    {
+        for (int i = 0; i < 100; i++)
+        {
+            double pt_time = *aos + i * pt_step;
+            double az, el;
+            get_az_el(calculate_moon_position(pt_time), epoch_to_gmst(pt_time), home_location.lat, home_location.lon, home_location.alt, &az, &el);
+            if (el < 0) el = 0; 
+            pts[(*num_pts)++] = (Vector2){(float)az, (float)el};
+        }
+    }
+}
 
 /* shared helper functions */
 bool IsOccludedByEarth(Vector3 camPos, Vector3 targetPos, float earthRadius)
@@ -369,19 +520,30 @@ static void FindSmartWindowPosition(float w, float h, AppConfig *cfg, float *out
 bool IsUITyping(void)
 {
     return edit_year || edit_month || edit_day || edit_hour || edit_min || edit_sec || edit_unix || edit_doppler_freq || edit_doppler_res || edit_doppler_file || edit_sat_search || edit_min_el ||
-           edit_hl_name || edit_hl_lat || edit_hl_lon || edit_hl_alt;
+           edit_hl_name || edit_hl_lat || edit_hl_lon || edit_hl_alt || edit_fps;
 }
 
 void ToggleTLEWarning(void) { show_tle_warning = !show_tle_warning; }
 
 bool IsMouseOverUI(AppConfig *cfg)
 {
-    if (show_exit_dialog)
+    if (show_exit_dialog || show_first_run_dialog)
         return true;
     if (!ui_initialized)
     {
         pd_x = GetScreenWidth() - 400.0f;
         pd_y = GetScreenHeight() - 400.0f;
+        LoadTLEState(cfg);
+        if (!cfg->first_run_done)
+        {
+            show_first_run_dialog = true;
+        }
+        else if (data_tle_epoch > 0)
+        {
+            long diff = time(NULL) - data_tle_epoch;
+            if (diff > 2 * 86400)
+                show_tle_warning = true;
+        }
         ui_initialized = true;
     }
 
@@ -406,7 +568,7 @@ bool IsMouseOverUI(AppConfig *cfg)
         over_window = true;
     if (show_tle_warning &&
         CheckCollisionPointRec(
-            GetMousePosition(), (Rectangle){(GetScreenWidth() - 300 * cfg->ui_scale) / 2.0f, (GetScreenHeight() - 130 * cfg->ui_scale) / 2.0f, 300 * cfg->ui_scale, 130 * cfg->ui_scale}
+            GetMousePosition(), (Rectangle){(GetScreenWidth() - 480 * cfg->ui_scale) / 2.0f, (GetScreenHeight() - 160 * cfg->ui_scale) / 2.0f, 480 * cfg->ui_scale, 160 * cfg->ui_scale}
         ))
         over_window = true;
 
@@ -414,7 +576,7 @@ bool IsMouseOverUI(AppConfig *cfg)
         return true;
 
     float center_x_bottom = (GetScreenWidth() - (5 * 35 - 5) * cfg->ui_scale) / 2.0f;
-    float center_x_top = (GetScreenWidth() - (10 * 35 - 5) * cfg->ui_scale) / 2.0f;
+    float center_x_top = (GetScreenWidth() - (11 * 35 - 5) * cfg->ui_scale) / 2.0f;
 
     Rectangle btnRecs[] = {
         {center_x_top, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
@@ -427,13 +589,14 @@ bool IsMouseOverUI(AppConfig *cfg)
         {center_x_top + 245 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
         {center_x_top + 280 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
         {center_x_top + 315 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
+        {center_x_top + 350 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
         {center_x_bottom, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
         {center_x_bottom + 35 * cfg->ui_scale, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
         {center_x_bottom + 70 * cfg->ui_scale, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
         {center_x_bottom + 105 * cfg->ui_scale, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
         {center_x_bottom + 140 * cfg->ui_scale, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale}
     };
-    for (int i = 0; i < 15; i++)
+    for (int i = 0; i < 16; i++)
     {
         if (CheckCollisionPointRec(GetMousePosition(), btnRecs[i]))
             return true;
@@ -610,8 +773,9 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
             edit_doppler_freq = edit_doppler_res = edit_doppler_file = false;
             edit_sat_search = edit_min_el = false;
             edit_hl_name = edit_hl_lat = edit_hl_lon = edit_hl_alt = false;
+            edit_fps = false;
         }
-        else
+        else if (!show_first_run_dialog)
         {
             show_exit_dialog = !show_exit_dialog;
         }
@@ -619,7 +783,7 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
 
     /* calculate interactive window rects */
     Rectangle helpWindow = {hw_x, hw_y, 900 * cfg->ui_scale, 140 * cfg->ui_scale};
-    Rectangle settingsWindow = {sw_x, sw_y, 250 * cfg->ui_scale, 465 * cfg->ui_scale};
+    Rectangle settingsWindow = {sw_x, sw_y, 250 * cfg->ui_scale, 495 * cfg->ui_scale};
     Rectangle timeWindow = {td_x, td_y, 252 * cfg->ui_scale, 320 * cfg->ui_scale};
     Rectangle tleWindow = {(GetScreenWidth() - 300 * cfg->ui_scale) / 2.0f, (GetScreenHeight() - 130 * cfg->ui_scale) / 2.0f, 300 * cfg->ui_scale, 130 * cfg->ui_scale};
     Rectangle passesWindow = {pd_x, pd_y, 357 * cfg->ui_scale, 380 * cfg->ui_scale};
@@ -949,18 +1113,19 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
     float buttons_w = (5 * 35 - 5) * cfg->ui_scale;
     float center_x_bottom = (GetScreenWidth() - buttons_w) / 2.0f;
     float btn_start_x = center_x_bottom;
-    float center_x_top = (GetScreenWidth() - (10 * 35 - 5) * cfg->ui_scale) / 2.0f;
+    float center_x_top = (GetScreenWidth() - (11 * 35 - 5) * cfg->ui_scale) / 2.0f;
 
     Rectangle btnSet = {center_x_top, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
-    Rectangle btnHelp = {center_x_top + 35 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
-    Rectangle btn2D3D = {center_x_top + 70 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
-    Rectangle btnSatMgr = {center_x_top + 105 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
-    Rectangle btnHideUnselected = {center_x_top + 140 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
-    Rectangle btnPasses = {center_x_top + 175 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
-    Rectangle btnTLEMgr = {center_x_top + 210 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
-    Rectangle btnSunlit = {center_x_top + 245 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
-    Rectangle btnSlantRange = {center_x_top + 280 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
-    Rectangle btnFrame = {center_x_top + 315 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
+    Rectangle btnTLEMgr = {center_x_top + 35 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
+    Rectangle btnSatMgr = {center_x_top + 70 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
+    Rectangle btnPasses = {center_x_top + 105 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
+    Rectangle btnPolar = {center_x_top + 140 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
+    Rectangle btnHelp = {center_x_top + 175 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
+    Rectangle btn2D3D = {center_x_top + 210 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
+    Rectangle btnHideUnselected = {center_x_top + 245 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
+    Rectangle btnSunlit = {center_x_top + 280 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
+    Rectangle btnSlantRange = {center_x_top + 315 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
+    Rectangle btnFrame = {center_x_top + 350 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
     Rectangle btnRewind = {btn_start_x, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
     Rectangle btnPlayPause = {btn_start_x + 35 * cfg->ui_scale, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
     Rectangle btnFastForward = {btn_start_x + 70 * cfg->ui_scale, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
@@ -991,7 +1156,8 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
     {
         if (!show_settings && !opened_once_settings)
         {
-            FindSmartWindowPosition(250 * cfg->ui_scale, 465 * cfg->ui_scale, cfg, &sw_x, &sw_y);
+            FindSmartWindowPosition(250 * cfg->ui_scale, 495 * cfg->ui_scale, cfg, &sw_x, &sw_y);
+            sprintf(text_fps, "%d", cfg->target_fps);
             opened_once_settings = true;
         }
         show_settings = !show_settings;
@@ -1056,6 +1222,19 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
     HIGHLIGHT_START(cfg->show_slant_range)
     if (GuiButton(btnSlantRange, "#34#"))
         cfg->show_slant_range = !cfg->show_slant_range;
+    HIGHLIGHT_END()
+
+    HIGHLIGHT_START(show_polar_dialog)
+    if (GuiButton(btnPolar, "#64#"))
+    {
+        if (!show_polar_dialog && !opened_once_polar)
+        {
+            FindSmartWindowPosition(300 * cfg->ui_scale, 430 * cfg->ui_scale, cfg, &pl_x, &pl_y);
+            opened_once_polar = true;
+        }
+        show_polar_dialog = !show_polar_dialog;
+        BringToFront(WND_POLAR);
+    }
     HIGHLIGHT_END()
 
     HIGHLIGHT_START(*ctx->is_ecliptic_frame)
@@ -1171,40 +1350,7 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
         {
             if (!show_tle_mgr_dialog)
                 break;
-            if (data_tle_epoch == -1)
-            {
-                FILE *f = fopen("data.tle", "r");
-                if (f)
-                {
-                    char line[256];
-                    if (fgets(line, sizeof(line), f))
-                    {
-                        if (strncmp(line, "# EPOCH:", 8) == 0)
-                        {
-                            unsigned int mask = 0, cust_mask = 0, ret_mask = 0;
-                            if (strstr(line, "RET_MASK:"))
-                                sscanf(line, "# EPOCH:%ld MASK:%u CUST_MASK:%u RET_MASK:%u", &data_tle_epoch, &mask, &cust_mask, &ret_mask);
-                            else if (strstr(line, "CUST_MASK:"))
-                                sscanf(line, "# EPOCH:%ld MASK:%u CUST_MASK:%u", &data_tle_epoch, &mask, &cust_mask);
-                            else
-                            {
-                                int cust_count = 0;
-                                sscanf(line, "# EPOCH:%ld MASK:%u CUST:%d", &data_tle_epoch, &mask, &cust_count);
-                            }
-
-                            for (int i = 0; i < 25; i++)
-                                celestrak_selected[i] = (mask & (1 << i)) != 0;
-                            for (int i = 0; i < NUM_RETLECTOR_SOURCES; i++)
-                                retlector_selected[i] = (ret_mask & (1 << i)) != 0;
-                            for (int i = 0; i < cfg->custom_tle_source_count; i++)
-                                cfg->custom_tle_sources[i].selected = (cust_mask & (1 << i)) != 0;
-                        }
-                    }
-                    fclose(f);
-                }
-                if (data_tle_epoch == -1)
-                    data_tle_epoch = 0;
-            }
+            LoadTLEState(cfg);
 
             if (drag_tle_mgr)
             {
@@ -1212,7 +1358,7 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
                 tm_y = GetMousePosition().y - drag_tle_mgr_off.y;
                 SnapWindow(&tm_x, &tm_y, tmMgrWindow.width, tmMgrWindow.height, cfg);
             }
-            if (GuiWindowBox(tmMgrWindow, "TLE Manager"))
+            if (GuiWindowBox(tmMgrWindow, "#1# TLE Manager"))
                 show_tle_mgr_dialog = false;
 
             char age_str[64] = "TLE Age: Unknown";
@@ -1230,62 +1376,7 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
 
             if (GuiButton((Rectangle){tm_x + tmMgrWindow.width - 110 * cfg->ui_scale, tm_y + 30 * cfg->ui_scale, 100 * cfg->ui_scale, 26 * cfg->ui_scale}, "Pull Data"))
             {
-                FILE *out = fopen("data.tle", "w");
-                if (out)
-                {
-                    unsigned int mask = 0, ret_mask = 0, cust_mask = 0;
-                    for (int i = 0; i < 25; i++)
-                        if (celestrak_selected[i])
-                            mask |= (1 << i);
-                    for (int i = 0; i < NUM_RETLECTOR_SOURCES; i++)
-                        if (retlector_selected[i])
-                            ret_mask |= (1 << i);
-                    for (int i = 0; i < cfg->custom_tle_source_count; i++)
-                        if (cfg->custom_tle_sources[i].selected)
-                            cust_mask |= (1 << i);
-
-                    fprintf(out, "# EPOCH:%ld MASK:%u CUST_MASK:%u RET_MASK:%u\n", (long)time(NULL), mask, cust_mask, ret_mask);
-                    fclose(out);
-
-                    for (int i = 0; i < NUM_RETLECTOR_SOURCES; i++)
-                        if (retlector_selected[i])
-                        {
-                            char cmd[512];
-                            snprintf(cmd, sizeof(cmd), "curl -sL --compressed \"%s\" >> data.tle", RETLECTOR_SOURCES[i].url);
-                            system(cmd);
-                        }
-                    for (int i = 0; i < 25; i++)
-                        if (celestrak_selected[i])
-                        {
-                            char cmd[512];
-                            snprintf(cmd, sizeof(cmd), "curl -sL --compressed \"%s\" >> data.tle", SOURCES[i].url);
-                            system(cmd);
-                        }
-                    for (int i = 0; i < cfg->custom_tle_source_count; i++)
-                        if (cfg->custom_tle_sources[i].selected)
-                        {
-                            char cmd[512];
-                            snprintf(cmd, sizeof(cmd), "curl -sL --compressed \"%s\" >> data.tle", cfg->custom_tle_sources[i].url);
-                            system(cmd);
-                        }
-
-                    *ctx->selected_sat = NULL;
-                    ctx->hovered_sat = NULL;
-                    ctx->active_sat = NULL;
-                    *ctx->active_lock = LOCK_EARTH;
-                    locked_pass_sat = NULL;
-                    num_passes = 0;
-                    last_pass_calc_sat = NULL;
-                    sat_count = 0;
-                    load_tle_data("data.tle");
-                    if (sat_count > 500)
-                    {
-                        for (int i = 0; i < sat_count; i++)
-                            satellites[i].is_active = false;
-                    }
-                    LoadSatSelection();
-                    data_tle_epoch = -1;
-                }
+                PullTLEData(ctx, cfg);
             }
 
             float total_height = 28 * cfg->ui_scale + (retlector_expanded ? NUM_RETLECTOR_SOURCES * 25 * cfg->ui_scale : 0);
@@ -1413,7 +1504,7 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
                 sm_y = GetMousePosition().y - drag_sat_mgr_off.y;
                 SnapWindow(&sm_x, &sm_y, smWindow.width, smWindow.height, cfg);
             }
-            if (GuiWindowBox(smWindow, "Satellite Manager"))
+            if (GuiWindowBox(smWindow, "#43# Satellite Manager"))
                 show_sat_mgr_dialog = false;
 
             AdvancedTextBox((Rectangle){sm_x + 10 * cfg->ui_scale, sm_y + 35 * cfg->ui_scale, smWindow.width - 90 * cfg->ui_scale, 24 * cfg->ui_scale}, sat_search_text, 64, &edit_sat_search, false);
@@ -1544,7 +1635,7 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
                 hw_y = GetMousePosition().y - drag_help_off.y;
                 SnapWindow(&hw_x, &hw_y, helpWindow.width, helpWindow.height, cfg);
             }
-            if (GuiWindowBox(helpWindow, "Help & Controls"))
+            if (GuiWindowBox(helpWindow, "#193# Help & Controls"))
                 show_help = false;
             DrawUIText(
                 customFont,
@@ -1582,6 +1673,11 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
                 else if (edit_hl_alt)
                 {
                     edit_hl_alt = false;
+                    edit_fps = true;
+                }
+                else if (edit_fps)
+                {
+                    edit_fps = false;
                     edit_hl_name = true;
                 }
             }
@@ -1591,7 +1687,7 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
                 sw_y = GetMousePosition().y - drag_settings_off.y;
                 SnapWindow(&sw_x, &sw_y, settingsWindow.width, settingsWindow.height, cfg);
             }
-            if (GuiWindowBox(settingsWindow, "Settings"))
+            if (GuiWindowBox(settingsWindow, "#142# Settings"))
                 show_settings = false;
 
             float sy = sw_y + 40 * cfg->ui_scale;
@@ -1625,6 +1721,10 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
 
             GuiLabel((Rectangle){sw_x + 10 * cfg->ui_scale, sy, 40 * cfg->ui_scale, 24 * cfg->ui_scale}, "Alt:");
             AdvancedTextBox((Rectangle){sw_x + 60 * cfg->ui_scale, sy, 170 * cfg->ui_scale, 24 * cfg->ui_scale}, text_hl_alt, 32, &edit_hl_alt, true);
+            sy += 30 * cfg->ui_scale;
+
+            GuiLabel((Rectangle){sw_x + 10 * cfg->ui_scale, sy, 80 * cfg->ui_scale, 24 * cfg->ui_scale}, "Max FPS:");
+            AdvancedTextBox((Rectangle){sw_x + 90 * cfg->ui_scale, sy, 140 * cfg->ui_scale, 24 * cfg->ui_scale}, text_fps, 8, &edit_fps, true);
             sy += 35 * cfg->ui_scale;
 
             if (GuiButton((Rectangle){sw_x + 10 * cfg->ui_scale, sy, 220 * cfg->ui_scale, 28 * cfg->ui_scale}, *ctx->picking_home ? "Cancel Picking" : "Pick on Map"))
@@ -1636,6 +1736,9 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
                 home_location.lat = atof(text_hl_lat);
                 home_location.lon = atof(text_hl_lon);
                 home_location.alt = atof(text_hl_alt);
+                cfg->target_fps = atoi(text_fps);
+                if (cfg->target_fps < 1) cfg->target_fps = 60;
+                SetTargetFPS(cfg->target_fps);
                 SaveAppConfig("settings.json", cfg);
                 if (show_passes_dialog)
                 {
@@ -1700,7 +1803,7 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
                 td_y = GetMousePosition().y - drag_time_off.y;
                 SnapWindow(&td_x, &td_y, timeWindow.width, timeWindow.height, cfg);
             }
-            if (GuiWindowBox(timeWindow, "Set Date & Time (UTC)"))
+            if (GuiWindowBox(timeWindow, "#139# Set Date & Time (UTC)"))
                 show_time_dialog = false;
 
             float cur_y = td_y + 35 * cfg->ui_scale;
@@ -1766,7 +1869,7 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
                 pd_y = GetMousePosition().y - drag_passes_off.y;
                 SnapWindow(&pd_x, &pd_y, passesWindow.width, passesWindow.height, cfg);
             }
-            if (GuiWindowBox(passesWindow, "Upcoming Passes"))
+            if (GuiWindowBox(passesWindow, "#208# Upcoming Passes"))
                 show_passes_dialog = false;
 
             if (GuiButton(
@@ -1859,6 +1962,7 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
                                 show_polar_dialog = true;
                                 BringToFront(WND_POLAR);
                             }
+                            polar_lunar_mode = false;
                             locked_pass_sat = passes[i].sat;
                             locked_pass_aos = passes[i].aos_epoch;
                             locked_pass_los = passes[i].los_epoch;
@@ -1901,18 +2005,30 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
                 pl_y = GetMousePosition().y - drag_polar_off.y;
                 SnapWindow(&pl_x, &pl_y, polarWindow.width, polarWindow.height, cfg);
             }
-            if (GuiWindowBox(polarWindow, "Polar Tracking Plot"))
+            if (GuiWindowBox(polarWindow, "#64# Polar Tracking Plot"))
                 show_polar_dialog = false;
 
-            if (selected_pass_idx >= 0 && selected_pass_idx < num_passes)
+            if (GuiButton((Rectangle){pl_x + 10 * cfg->ui_scale, pl_y + 30 * cfg->ui_scale, polarWindow.width - 20 * cfg->ui_scale, 24 * cfg->ui_scale}, polar_lunar_mode ? "Mode: Lunar Tracking" : "Mode: Satellite Pass")) {
+                polar_lunar_mode = !polar_lunar_mode;
+            }
+
+            float cx = pl_x + polarWindow.width / 2;
+            float cy = pl_y + 175 * cfg->ui_scale;
+            float r_max = 100 * cfg->ui_scale;
+            
+            bool has_data = false;
+            if (polar_lunar_mode) {
+                has_data = true;
+                if (fabs(*ctx->current_epoch - last_lunar_calc_time) > 0.5 || lunar_num_pts == 0) {
+                    CalculateLunarPass(*ctx->current_epoch, &lunar_aos, &lunar_los, lunar_path_pts, &lunar_num_pts);
+                    last_lunar_calc_time = *ctx->current_epoch;
+                }
+            } else if (selected_pass_idx >= 0 && selected_pass_idx < num_passes) {
+                has_data = true;
+            }
+
+            if (has_data)
             {
-                SatPass *p = &passes[selected_pass_idx];
-                Satellite *p_sat = p->sat;
-
-                float cx = pl_x + polarWindow.width / 2;
-                float cy = pl_y + 160 * cfg->ui_scale;
-                float r_max = 100 * cfg->ui_scale;
-
                 DrawCircleLines(cx, cy, r_max, cfg->ui_secondary);
                 DrawCircleLines(cx, cy, r_max * 0.666f, cfg->ui_secondary);
                 DrawCircleLines(cx, cy, r_max * 0.333f, cfg->ui_secondary);
@@ -1924,16 +2040,26 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
                 DrawUIText(customFont, "S", cx - 5 * cfg->ui_scale, cy + r_max + 5 * cfg->ui_scale, 16 * cfg->ui_scale, cfg->text_secondary);
                 DrawUIText(customFont, "W", cx - r_max - 20 * cfg->ui_scale, cy - 8 * cfg->ui_scale, 16 * cfg->ui_scale, cfg->text_secondary);
 
-                for (int k = 0; k < p->num_pts - 1; k++)
+                int num_pts = polar_lunar_mode ? lunar_num_pts : passes[selected_pass_idx].num_pts;
+                Vector2 *path_pts = polar_lunar_mode ? lunar_path_pts : passes[selected_pass_idx].path_pts;
+                double p_aos = polar_lunar_mode ? lunar_aos : passes[selected_pass_idx].aos_epoch;
+                double p_los = polar_lunar_mode ? lunar_los : passes[selected_pass_idx].los_epoch;
+                Satellite *p_sat = polar_lunar_mode ? NULL : passes[selected_pass_idx].sat;
+
+                for (int k = 0; k < num_pts - 1; k++)
                 {
-                    float r1 = r_max * (90 - p->path_pts[k].y) / 90.0f, r2 = r_max * (90 - p->path_pts[k + 1].y) / 90.0f;
-                    Vector2 pt1 = {cx + r1 * sin(p->path_pts[k].x * DEG2RAD), cy - r1 * cos(p->path_pts[k].x * DEG2RAD)};
-                    Vector2 pt2 = {cx + r2 * sin(p->path_pts[k + 1].x * DEG2RAD), cy - r2 * cos(p->path_pts[k + 1].x * DEG2RAD)};
+                    float r1 = r_max * (90 - path_pts[k].y) / 90.0f;
+                    float r2 = r_max * (90 - path_pts[k + 1].y) / 90.0f;
+                    if (r1 > r_max) r1 = r_max;
+                    if (r2 > r_max) r2 = r_max;
+                    
+                    Vector2 pt1 = {cx + r1 * sin(path_pts[k].x * DEG2RAD), cy - r1 * cos(path_pts[k].x * DEG2RAD)};
+                    Vector2 pt2 = {cx + r2 * sin(path_pts[k + 1].x * DEG2RAD), cy - r2 * cos(path_pts[k + 1].x * DEG2RAD)};
 
                     Color lineCol = cfg->ui_accent;
-                    if (cfg->highlight_sunlit)
+                    if (!polar_lunar_mode && cfg->highlight_sunlit)
                     {
-                        double pt_epoch = p->aos_epoch + k * ((p->los_epoch - p->aos_epoch) / (double)(p->num_pts - 1));
+                        double pt_epoch = p_aos + k * ((p_los - p_aos) / (double)(num_pts - 1));
                         if (!is_sat_eclipsed(calculate_position(p_sat, get_unix_from_epoch(pt_epoch)), Vector3Normalize(calculate_sun_position(pt_epoch))))
                             lineCol = cfg->sat_highlighted;
                         else
@@ -1942,16 +2068,16 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
                     DrawLineEx(pt1, pt2, 2.0f, lineCol);
                 }
 
-                /* Polar scrub interaction */
                 Rectangle polar_area = {cx - r_max, cy - r_max, r_max * 2, r_max * 2};
                 if (is_topmost && CheckCollisionPointRec(GetMousePosition(), polar_area) && IsMouseButtonDown(MOUSE_LEFT_BUTTON))
                 {
                     float min_d = 999999;
                     int best_k = 0;
-                    for (int k = 0; k < p->num_pts; k++)
+                    for (int k = 0; k < num_pts; k++)
                     {
-                        float r = r_max * (90 - p->path_pts[k].y) / 90.0f;
-                        Vector2 pt = {cx + r * sin(p->path_pts[k].x * DEG2RAD), cy - r * cos(p->path_pts[k].x * DEG2RAD)};
+                        float r = r_max * (90 - path_pts[k].y) / 90.0f;
+                        if (r > r_max) r = r_max;
+                        Vector2 pt = {cx + r * sin(path_pts[k].x * DEG2RAD), cy - r * cos(path_pts[k].x * DEG2RAD)};
                         float d = Vector2Distance(GetMousePosition(), pt);
                         if (d < min_d)
                         {
@@ -1959,57 +2085,67 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
                             best_k = k;
                         }
                     }
-                    double progress = (p->num_pts > 1) ? (best_k / (double)(p->num_pts - 1)) : 0.0;
-                    *ctx->current_epoch = p->aos_epoch + progress * (p->los_epoch - p->aos_epoch);
+                    double progress = (num_pts > 1) ? (best_k / (double)(num_pts - 1)) : 0.0;
+                    *ctx->current_epoch = p_aos + progress * (p_los - p_aos);
                     *ctx->is_auto_warping = false;
                 }
 
-                if (*ctx->current_epoch >= p->aos_epoch && *ctx->current_epoch <= p->los_epoch)
+                if (*ctx->current_epoch >= p_aos && *ctx->current_epoch <= p_los)
                 {
                     double c_az, c_el;
-                    get_az_el(
-                        calculate_position(p_sat, get_unix_from_epoch(*ctx->current_epoch)), epoch_to_gmst(*ctx->current_epoch), home_location.lat, home_location.lon, home_location.alt, &c_az, &c_el
-                    );
+                    if (polar_lunar_mode) {
+                        get_az_el(calculate_moon_position(*ctx->current_epoch), epoch_to_gmst(*ctx->current_epoch), home_location.lat, home_location.lon, home_location.alt, &c_az, &c_el);
+                    } else {
+                        get_az_el(calculate_position(p_sat, get_unix_from_epoch(*ctx->current_epoch)), epoch_to_gmst(*ctx->current_epoch), home_location.lat, home_location.lon, home_location.alt, &c_az, &c_el);
+                    }
 
                     float r_c = r_max * (90 - c_el) / 90.0f;
+                    if (r_c > r_max) r_c = r_max;
                     Vector2 pt_c = {cx + r_c * sin(c_az * DEG2RAD), cy - r_c * cos(c_az * DEG2RAD)};
                     DrawCircleV(pt_c, 5.0f * cfg->ui_scale, RED);
                     DrawCircleLines(pt_c.x, pt_c.y, 7.0f * cfg->ui_scale, WHITE);
 
-                    double s_range = get_sat_range(p_sat, *ctx->current_epoch, home_location);
                     char c_info[128];
                     sprintf(c_info, "Az: %05.1f  El: %04.1f", c_az, c_el);
-                    DrawUIText(customFont, c_info, pl_x + 20 * cfg->ui_scale, pl_y + 280 * cfg->ui_scale, 16 * cfg->ui_scale, cfg->text_main);
+                    DrawUIText(customFont, c_info, pl_x + 20 * cfg->ui_scale, pl_y + 295 * cfg->ui_scale, 16 * cfg->ui_scale, cfg->text_main);
 
-                    char rng_info[64];
-                    sprintf(rng_info, "Range: %.0f km", s_range);
-                    DrawUIText(customFont, rng_info, pl_x + 20 * cfg->ui_scale, pl_y + 300 * cfg->ui_scale, 16 * cfg->ui_scale, cfg->text_main);
+                    if (!polar_lunar_mode) {
+                        double s_range = get_sat_range(p_sat, *ctx->current_epoch, home_location);
+                        char rng_info[64];
+                        sprintf(rng_info, "Range: %.0f km", s_range);
+                        DrawUIText(customFont, rng_info, pl_x + 20 * cfg->ui_scale, pl_y + 315 * cfg->ui_scale, 16 * cfg->ui_scale, cfg->text_main);
+                    } else {
+                        double m_range = Vector3Length(calculate_moon_position(*ctx->current_epoch)) - EARTH_RADIUS_KM;
+                        char rng_info[64];
+                        sprintf(rng_info, "Range: %.0f km", m_range);
+                        DrawUIText(customFont, rng_info, pl_x + 20 * cfg->ui_scale, pl_y + 315 * cfg->ui_scale, 16 * cfg->ui_scale, cfg->text_main);
+                    }
 
-                    int sec_till_los = (int)((p->los_epoch - *ctx->current_epoch) * 86400.0);
+                    int sec_till_los = (int)((p_los - *ctx->current_epoch) * 86400.0);
                     DrawUIText(
-                        customFont, TextFormat("LOS in: %02d:%02d", sec_till_los / 60, sec_till_los % 60), pl_x + 20 * cfg->ui_scale, pl_y + 320 * cfg->ui_scale, 16 * cfg->ui_scale, cfg->ui_accent
+                        customFont, TextFormat("%s in: %02d:%02d", polar_lunar_mode ? "Set" : "LOS", sec_till_los / 60, sec_till_los % 60), pl_x + 20 * cfg->ui_scale, pl_y + 335 * cfg->ui_scale, 16 * cfg->ui_scale, cfg->ui_accent
                     );
                 }
-                else if (*ctx->current_epoch < p->aos_epoch)
+                else if (*ctx->current_epoch < p_aos)
                 {
-                    int sec_till_aos = (int)((p->aos_epoch - *ctx->current_epoch) * 86400.0);
+                    int sec_till_aos = (int)((p_aos - *ctx->current_epoch) * 86400.0);
                     DrawUIText(
-                        customFont, TextFormat("AOS in: %02d:%02d:%02d", sec_till_aos / 3600, (sec_till_aos % 3600) / 60, sec_till_aos % 60), pl_x + 20 * cfg->ui_scale, pl_y + 295 * cfg->ui_scale,
+                        customFont, TextFormat("%s in: %02d:%02d:%02d", polar_lunar_mode ? "Rise" : "AOS", sec_till_aos / 3600, (sec_till_aos % 3600) / 60, sec_till_aos % 60), pl_x + 20 * cfg->ui_scale, pl_y + 310 * cfg->ui_scale,
                         16 * cfg->ui_scale, cfg->text_secondary
                     );
                 }
                 else
-                    DrawUIText(customFont, "Pass Complete", pl_x + 20 * cfg->ui_scale, pl_y + 295 * cfg->ui_scale, 16 * cfg->ui_scale, cfg->text_secondary);
+                    DrawUIText(customFont, polar_lunar_mode ? "Set Complete" : "Pass Complete", pl_x + 20 * cfg->ui_scale, pl_y + 310 * cfg->ui_scale, 16 * cfg->ui_scale, cfg->text_secondary);
 
-                if (GuiButton((Rectangle){pl_x + 20 * cfg->ui_scale, pl_y + 345 * cfg->ui_scale, 260 * cfg->ui_scale, 30 * cfg->ui_scale}, "#134# Jump to AOS"))
+                if (GuiButton((Rectangle){pl_x + 20 * cfg->ui_scale, pl_y + 360 * cfg->ui_scale, 260 * cfg->ui_scale, 30 * cfg->ui_scale}, TextFormat("#134# Jump to %s", polar_lunar_mode ? "Rise" : "AOS")))
                 {
-                    *ctx->auto_warp_target = p->aos_epoch;
+                    *ctx->auto_warp_target = p_aos;
                     *ctx->auto_warp_initial_diff = (*ctx->auto_warp_target - *ctx->current_epoch) * 86400.0;
                     if (fabs(*ctx->auto_warp_initial_diff) > 0.0)
                         *ctx->is_auto_warping = true;
                 }
 
-                if (GuiButton((Rectangle){pl_x + 20 * cfg->ui_scale, pl_y + 385 * cfg->ui_scale, 260 * cfg->ui_scale, 30 * cfg->ui_scale}, "#125# Doppler Shift Analysis"))
+                if (!polar_lunar_mode && GuiButton((Rectangle){pl_x + 20 * cfg->ui_scale, pl_y + 395 * cfg->ui_scale, 260 * cfg->ui_scale, 30 * cfg->ui_scale}, "#125# Doppler Shift Analysis"))
                 {
                     if (!show_doppler_dialog)
                     {
@@ -2024,7 +2160,10 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
                 }
             }
             else
-                DrawUIText(customFont, "No valid pass selected.", pl_x + 20 * cfg->ui_scale, pl_y + 40 * cfg->ui_scale, 16 * cfg->ui_scale, cfg->text_main);
+            {
+                DrawUIText(customFont, "Select a pass first or toggle", pl_x + 20 * cfg->ui_scale, pl_y + 100 * cfg->ui_scale, 16 * cfg->ui_scale, cfg->text_main);
+                DrawUIText(customFont, "Lunar Mode to track the Moon.", pl_x + 20 * cfg->ui_scale, pl_y + 120 * cfg->ui_scale, 16 * cfg->ui_scale, cfg->text_main);
+            }
             break;
         }
 
@@ -2060,7 +2199,7 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
                 dop_y = GetMousePosition().y - drag_doppler_off.y;
                 SnapWindow(&dop_x, &dop_y, dopplerWindow.width, dopplerWindow.height, cfg);
             }
-            if (GuiWindowBox(dopplerWindow, "Doppler Shift Analysis"))
+            if (GuiWindowBox(dopplerWindow, "#125# Doppler Shift Analysis"))
                 show_doppler_dialog = false;
 
             if (selected_pass_idx >= 0 && selected_pass_idx < num_passes)
@@ -2196,11 +2335,101 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
 
     if (show_tle_warning)
     {
-        if (GuiWindowBox(tleWindow, "Warning"))
+        Rectangle tleWarnWindow = {(GetScreenWidth() - 480 * cfg->ui_scale) / 2.0f, (GetScreenHeight() - 160 * cfg->ui_scale) / 2.0f, 480 * cfg->ui_scale, 160 * cfg->ui_scale};
+        if (GuiWindowBox(tleWarnWindow, "#193# TLEs Outdated"))
             show_tle_warning = false;
-        DrawUIText(customFont, "Your TLEs are out of date.", tleWindow.x + 20 * cfg->ui_scale, tleWindow.y + 45 * cfg->ui_scale, 18 * cfg->ui_scale, cfg->text_main);
-        if (GuiButton((Rectangle){tleWindow.x + 160 * cfg->ui_scale, tleWindow.y + 80 * cfg->ui_scale, 120 * cfg->ui_scale, 30 * cfg->ui_scale}, "Ignore"))
+        
+        long days_old = data_tle_epoch > 0 ? (time(NULL) - data_tle_epoch) / 86400 : 999;
+        char warn_msg[128];
+        sprintf(warn_msg, "Your orbital data (TLEs) is %ld days old.", days_old);
+        
+        Vector2 msgSize = MeasureTextEx(customFont, warn_msg, 16 * cfg->ui_scale, 1.0f);
+        DrawUIText(customFont, warn_msg, tleWarnWindow.x + (tleWarnWindow.width - msgSize.x) / 2.0f, tleWarnWindow.y + 40 * cfg->ui_scale, 16 * cfg->ui_scale, cfg->text_main);
+
+        const char *sub_msg = "Would you like to update it now?";
+        Vector2 subSize = MeasureTextEx(customFont, sub_msg, 16 * cfg->ui_scale, 1.0f);
+        DrawUIText(customFont, sub_msg, tleWarnWindow.x + (tleWarnWindow.width - subSize.x) / 2.0f, tleWarnWindow.y + 65 * cfg->ui_scale, 16 * cfg->ui_scale, cfg->text_secondary);
+        
+        float btnWidth = 140 * cfg->ui_scale;
+        float spacing = 15 * cfg->ui_scale;
+        float startX = tleWarnWindow.x + (tleWarnWindow.width - (3 * btnWidth + 2 * spacing)) / 2.0f;
+
+        if (GuiButton((Rectangle){startX, tleWarnWindow.y + 105 * cfg->ui_scale, btnWidth, 35 * cfg->ui_scale}, "#112# Update All")) {
+            PullTLEData(ctx, cfg);
             show_tle_warning = false;
+        }
+        if (GuiButton((Rectangle){startX + btnWidth + spacing, tleWarnWindow.y + 105 * cfg->ui_scale, btnWidth, 35 * cfg->ui_scale}, "#1# Manage")) {
+            show_tle_warning = false;
+            if (!show_tle_mgr_dialog) {
+                if (!opened_once_tle_mgr) {
+                    FindSmartWindowPosition(400 * cfg->ui_scale, 500 * cfg->ui_scale, cfg, &tm_x, &tm_y);
+                    opened_once_tle_mgr = true;
+                }
+                show_tle_mgr_dialog = true;
+                BringToFront(WND_TLE_MGR);
+            }
+        }
+        if (GuiButton((Rectangle){startX + 2 * (btnWidth + spacing), tleWarnWindow.y + 105 * cfg->ui_scale, btnWidth, 35 * cfg->ui_scale}, "#113# Ignore")) {
+            show_tle_warning = false;
+        }
+    }
+
+    if (show_first_run_dialog)
+    {
+        DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), (Color){0, 0, 0, 180});
+        Rectangle frRec = {(GetScreenWidth() - 520 * cfg->ui_scale) / 2.0f, (GetScreenHeight() - 240 * cfg->ui_scale) / 2.0f, 520 * cfg->ui_scale, 240 * cfg->ui_scale};
+        GuiWindowBox(frRec, "#198# Welcome to TLEscope!");
+        
+        const char* msg1 = "Please select a graphics profile for your first run:";
+        Vector2 msg1Size = MeasureTextEx(customFont, msg1, 16 * cfg->ui_scale, 1.0f);
+        DrawUIText(customFont, msg1, frRec.x + (frRec.width - msg1Size.x) / 2.0f, frRec.y + 45 * cfg->ui_scale, 16 * cfg->ui_scale, cfg->text_main);
+        
+        float btnW = 220 * cfg->ui_scale;
+        float btnH = 50 * cfg->ui_scale;
+        float spacing = 20 * cfg->ui_scale;
+        float startX = frRec.x + (frRec.width - (2 * btnW + spacing)) / 2.0f;
+
+        Rectangle perfBtnRec = {startX, frRec.y + 90 * cfg->ui_scale, btnW, btnH};
+        bool perfClicked = GuiButton(perfBtnRec, "");
+        Vector2 pTitleSize = MeasureTextEx(customFont, "Performance", 16 * cfg->ui_scale, 1.0f);
+        Vector2 pSubSize = MeasureTextEx(customFont, "(60 FPS, Low VFX)", 14 * cfg->ui_scale, 1.0f);
+        DrawUIText(customFont, "Performance", perfBtnRec.x + (perfBtnRec.width - pTitleSize.x) / 2.0f, perfBtnRec.y + 8 * cfg->ui_scale, 16 * cfg->ui_scale, cfg->text_main);
+        DrawUIText(customFont, "(60 FPS, Low VFX)", perfBtnRec.x + (perfBtnRec.width - pSubSize.x) / 2.0f, perfBtnRec.y + 26 * cfg->ui_scale, 14 * cfg->ui_scale, cfg->text_secondary);
+
+        if (perfClicked) {
+            cfg->show_clouds = false;
+            cfg->show_scattering = false;
+            cfg->show_night_lights = true;
+            cfg->target_fps = 60;
+            cfg->first_run_done = true;
+            show_first_run_dialog = false;
+            SetTargetFPS(cfg->target_fps);
+            SaveAppConfig("settings.json", cfg);
+            if (data_tle_epoch > 0 && time(NULL) - data_tle_epoch > 2 * 86400) show_tle_warning = true;
+        }
+
+        Rectangle aesBtnRec = {startX + btnW + spacing, frRec.y + 90 * cfg->ui_scale, btnW, btnH};
+        bool aesClicked = GuiButton(aesBtnRec, "");
+        Vector2 aTitleSize = MeasureTextEx(customFont, "Aesthetic", 16 * cfg->ui_scale, 1.0f);
+        Vector2 aSubSize = MeasureTextEx(customFont, "(120 FPS, High VFX)", 14 * cfg->ui_scale, 1.0f);
+        DrawUIText(customFont, "Aesthetic", aesBtnRec.x + (aesBtnRec.width - aTitleSize.x) / 2.0f, aesBtnRec.y + 8 * cfg->ui_scale, 16 * cfg->ui_scale, cfg->text_main);
+        DrawUIText(customFont, "(120 FPS, High VFX)", aesBtnRec.x + (aesBtnRec.width - aSubSize.x) / 2.0f, aesBtnRec.y + 26 * cfg->ui_scale, 14 * cfg->ui_scale, cfg->text_secondary);
+
+        if (aesClicked) {
+            cfg->show_clouds = true;
+            cfg->show_scattering = true;
+            cfg->show_night_lights = true;
+            cfg->target_fps = 120;
+            cfg->first_run_done = true;
+            show_first_run_dialog = false;
+            SetTargetFPS(cfg->target_fps);
+            SaveAppConfig("settings.json", cfg);
+            if (data_tle_epoch > 0 && time(NULL) - data_tle_epoch > 2 * 86400) show_tle_warning = true;
+        }
+        
+        const char* msg2 = "Settings can be tweaked later in the settings menu.";
+        Vector2 msg2Size = MeasureTextEx(customFont, msg2, 14 * cfg->ui_scale, 1.0f);
+        DrawUIText(customFont, msg2, frRec.x + (frRec.width - msg2Size.x) / 2.0f, frRec.y + 175 * cfg->ui_scale, 14 * cfg->ui_scale, cfg->text_secondary);
     }
 
     /* render persistent bottom bar, stats, and tooltips */
@@ -2215,14 +2444,15 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
         GetScreenHeight() - 35 * cfg->ui_scale, 20 * cfg->ui_scale, cfg->text_main
     );
 
-    const char *tt_texts[15] = {
+    const char *tt_texts[16] = {
         "Settings",
+        "TLE Manager",
+        "Satellite Manager",
+        "Pass Predictor",
+        "Polar Plot",
         "Help & Controls",
         "Toggle 2D/3D View",
-        "Satellite Manager",
         "Toggle Unselected Orbits",
-        "Pass Predictor",
-        "TLE Manager",
         "Highlight Sunlit Orbits",
         "Slant Range Line",
         "Toggle Frame (ECI/Ecliptic)",
@@ -2233,10 +2463,10 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
         "Set Date & Time"
     };
 
-    for (int i = 0; i < 15; i++)
+    for (int i = 0; i < 16; i++)
     {
         if (top_hovered_wnd == -1 && CheckCollisionPointRec(
-                                         GetMousePosition(), (Rectangle[]){btnSet, btnHelp, btn2D3D, btnSatMgr, btnHideUnselected, btnPasses, btnTLEMgr, btnSunlit, btnSlantRange, btnFrame, btnRewind,
+                                         GetMousePosition(), (Rectangle[]){btnSet, btnTLEMgr, btnSatMgr, btnPasses, btnPolar, btnHelp, btn2D3D, btnHideUnselected, btnSunlit, btnSlantRange, btnFrame, btnRewind,
                                                                            btnPlayPause, btnFastForward, btnNow, btnClock}[i]
                                      ))
         {
@@ -2320,7 +2550,7 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
     {
         DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), (Color){0, 0, 0, 150});
         Rectangle exitRec = {(GetScreenWidth() - 300 * cfg->ui_scale) / 2.0f, (GetScreenHeight() - 140 * cfg->ui_scale) / 2.0f, 300 * cfg->ui_scale, 140 * cfg->ui_scale};
-        if (GuiWindowBox(exitRec, "Exit Application"))
+        if (GuiWindowBox(exitRec, "#159# Exit Application"))
             show_exit_dialog = false;
         DrawUIText(customFont, "Are you sure you want to exit?", exitRec.x + 25 * cfg->ui_scale, exitRec.y + 45 * cfg->ui_scale, 16 * cfg->ui_scale, cfg->text_main);
         if (GuiButton((Rectangle){exitRec.x + 20 * cfg->ui_scale, exitRec.y + 85 * cfg->ui_scale, 120 * cfg->ui_scale, 30 * cfg->ui_scale}, "Yes"))

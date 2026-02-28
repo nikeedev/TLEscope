@@ -38,6 +38,7 @@ void LoadAppConfig(const char *filename, AppConfig *config)
     config->highlight_sunlit = false; // default
     config->show_slant_range = false; // default
     config->show_scattering = false; // default
+    config->first_run_done = false;   // default
     config->custom_tle_source_count = 0;
 
     if (FileExists(filename))
@@ -184,6 +185,17 @@ void LoadAppConfig(const char *filename, AppConfig *config)
                 if (true_ptr && (!comma || true_ptr < comma))
                 {
                     config->show_scattering = true;
+                }
+            }
+
+            char *fr_ptr = strstr(text, "\"first_run_done\"");
+            if (fr_ptr)
+            {
+                char *comma = strchr(fr_ptr, ',');
+                char *true_ptr = strstr(fr_ptr, "true");
+                if (true_ptr && (!comma || true_ptr < comma))
+                {
+                    config->first_run_done = true;
                 }
             }
 
@@ -401,6 +413,7 @@ void SaveAppConfig(const char *filename, AppConfig *config)
     fprintf(file, "    \"highlight_sunlit\": %s,\n", config->highlight_sunlit ? "true" : "false");
     fprintf(file, "    \"show_slant_range\": %s,\n", config->show_slant_range ? "true" : "false");
     fprintf(file, "    \"show_scattering\": %s,\n", config->show_scattering ? "true" : "false");
+    fprintf(file, "    \"first_run_done\": %s,\n", config->first_run_done ? "true" : "false");
 
     if (config->custom_tle_source_count > 0)
     {

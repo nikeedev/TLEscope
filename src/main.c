@@ -601,6 +601,7 @@ int main(void)
     double auto_warp_initial_diff = 0.0;
     bool exit_app = false;
     bool is_ecliptic_frame = false;
+    float current_ecliptic_angle = 0.0f;
 
     Satellite *hovered_sat = NULL;
     Satellite *selected_sat = NULL;
@@ -980,6 +981,9 @@ int main(void)
         camDistance = Lerp(camDistance, target_camDistance, smooth_speed);
         Camera3DParams.target = Vector3Lerp(Camera3DParams.target, target_camera3d_target, smooth_speed);
 
+        float target_ecliptic_angle = is_ecliptic_frame ? (23.439f * DEG2RAD) : 0.0f;
+        current_ecliptic_angle = Lerp(current_ecliptic_angle, target_ecliptic_angle, smooth_speed);
+
         if (!is_2d_view)
         {
             Vector3 offset = {
@@ -989,9 +993,9 @@ int main(void)
             };
             Vector3 upVec = {0.0f, 1.0f, 0.0f};
 
-            if (is_ecliptic_frame)
+            if (current_ecliptic_angle > 0.0001f)
             {
-                Matrix rot = MatrixRotateX(23.439f * DEG2RAD);
+                Matrix rot = MatrixRotateX(current_ecliptic_angle);
                 offset = Vector3Transform(offset, rot);
                 upVec = Vector3Transform(upVec, rot);
             }
