@@ -49,32 +49,33 @@ static TLESource_t SOURCES[] = {
 };
 
 static TLESource_t RETLECTOR_SOURCES[] = {
-    {"1", "All active", "https://retlector.eu/tle/active"},
-    {"2", "100 Brightest", "https://retlector.eu/tle/visual"},
-    {"3", "Analyst satellites", "https://retlector.eu/tle/analyst"},
-    {"4", "Cosmos 1408 ASAT test debris", "https://retlector.eu/tle/cosmos-1408"},
-    {"5", "Fengyun-1C ASAT test debris", "https://retlector.eu/tle/fengyun-1c-debris"},
-    {"6", "Iridium 33 collision debris", "https://retlector.eu/tle/iridium-33-debris"},
-    {"7", "Cosmos 2251 collision debris", "https://retlector.eu/tle/cosmos-2251-debris"},
-    {"8", "Weather satellites", "https://retlector.eu/tle/weather"},
-    {"9", "NOAA satellites", "https://retlector.eu/tle/noaa"},
-    {"10", "GOES satellites", "https://retlector.eu/tle/goes"},
-    {"11", "Earth resources satellites", "https://retlector.eu/tle/resources"},
-    {"12", "SARSAT payload satellites", "https://retlector.eu/tle/sarsat"},
-    {"13", "Disaster monitoring satellites", "https://retlector.eu/tle/dmc"},
-    {"14", "TDRSS system", "https://retlector.eu/tle/tdrss"},
-    {"15", "Argos satellites", "https://retlector.eu/tle/argos"},
-    {"16", "Space stations", "https://retlector.eu/tle/station"},
-    {"17", "Geostationary satellites", "https://retlector.eu/tle/geo"},
-    {"18", "GNSS satellites", "https://retlector.eu/tle/gnss"},
-    {"19", "GPS operational satellites", "https://retlector.eu/tle/gps-ops"},
-    {"20", "GLONASS operational satellites", "https://retlector.eu/tle/glo-ops"},
-    {"21", "Galileo satellites", "https://retlector.eu/tle/galileo"},
-    {"22", "BeiDou satellites", "https://retlector.eu/tle/beidou"},
-    {"23", "SBAS satellites", "https://retlector.eu/tle/sbas"},
-    {"24", "Education satellites", "https://retlector.eu/tle/education"}
+    {"1", "Last 30 Days' Launches", "https://retlector.eu/tle/last-30-days"},
+    {"2", "Space Stations", "https://retlector.eu/tle/stations"},
+    {"3", "100 Brightest", "https://retlector.eu/tle/visual"},
+    {"4", "Active Satellites", "https://retlector.eu/tle/active"},
+    {"5", "Analyst Satellites", "https://retlector.eu/tle/analyst"},
+    {"6", "Russian ASAT (COSMOS 1408)", "https://retlector.eu/tle/cosmos-1408-debris"},
+    {"7", "Chinese ASAT (FENGYUN 1C)", "https://retlector.eu/tle/fengyun-1c-debris"},
+    {"8", "IRIDIUM 33 Debris", "https://retlector.eu/tle/iridium-33-debris"},
+    {"9", "COSMOS 2251 Debris", "https://retlector.eu/tle/cosmos-2251-debris"},
+    {"10", "Weather", "https://retlector.eu/tle/weather"},
+    {"11", "NOAA", "https://retlector.eu/tle/noaa"},
+    {"12", "GOES", "https://retlector.eu/tle/goes"},
+    {"13", "Earth Resources", "https://retlector.eu/tle/resource"},
+    {"14", "SARSAT", "https://retlector.eu/tle/sarsat"},
+    {"15", "Disaster Monitoring", "https://retlector.eu/tle/dmc"},
+    {"16", "TDRSS", "https://retlector.eu/tle/tdrss"},
+    {"17", "ARGOS", "https://retlector.eu/tle/argos"},
+    {"18", "Planet", "https://retlector.eu/tle/planet"},
+    {"19", "Spire", "https://retlector.eu/tle/spire"},
+    {"20", "Starlink", "https://retlector.eu/tle/starlink"},
+    {"21", "OneWeb", "https://retlector.eu/tle/oneweb"},
+    {"22", "GPS Operational", "https://retlector.eu/tle/gps-ops"},
+    {"23", "Galileo", "https://retlector.eu/tle/galileo"},
+    {"24", "Amateur Radio", "https://retlector.eu/tle/amateur"},
+    {"25", "CubeSats", "https://retlector.eu/tle/cubesat"}
 };
-#define NUM_RETLECTOR_SOURCES 24
+#define NUM_RETLECTOR_SOURCES 25
 
 /* window z-ordering management */
 typedef enum
