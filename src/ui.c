@@ -10,6 +10,19 @@
 #include <string.h>
 #include <time.h>
 
+/* prevent Windows API from colliding with raylib's rectangle jesus christ */
+#if defined(_WIN32) || defined(_WIN64)
+#define WIN32_LEAN_AND_MEAN
+#define NOGDI
+#define NOUSER
+
+/* MinGW headers require LPMSG but ignore NOUSER */
+typedef struct tagMSG *LPMSG;
+#endif
+#include <curl/curl.h>
+
+//TODO: explain better what in gods name happened above
+
 #define RAYGUI_IMPLEMENTATION
 #include "../lib/raygui.h"
 
@@ -243,9 +256,66 @@ static void LoadTLEState(AppConfig *cfg)
     if (data_tle_epoch == -1) data_tle_epoch = 0;
 }
 
+struct MemoryStruct {
+    char *memory;
+    size_t size;
+};
+
+static size_t write_memory_callback(void *contents, size_t size, size_t nmemb, void *userp)
+{
+    size_t realsize = size * nmemb;
+    struct MemoryStruct *mem = (struct MemoryStruct *)userp;
+
+    char *ptr = realloc(mem->memory, mem->size + realsize + 1);
+    if (!ptr) return 0; // out of memory
+
+    mem->memory = ptr;
+    memcpy(&(mem->memory[mem->size]), contents, realsize);
+    mem->size += realsize;
+    mem->memory[mem->size] = 0;
+
+    return realsize;
+}
+
+static void DownloadTLESource(CURL *curl, const char *url, FILE *out)
+{
+    if (!curl || !url || !out) return;
+
+    struct MemoryStruct chunk;
+    chunk.memory = malloc(1);
+    chunk.size = 0;
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_memory_callback);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, ""); // handle compression
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "Mozilla 5.0 (compatible; TLEscope/3.X; +https://github.com/aweeri/TLEscope)"); //TODO: add version whenever aval internally
+
+#if defined(_WIN32) || defined(_WIN64)
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+#endif
+
+    CURLcode res = curl_easy_perform(curl);
+    long http_code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+
+    if (res == CURLE_OK && http_code == 200)
+    {
+        fwrite(chunk.memory, 1, chunk.size, out);
+        fprintf(out, "\r\n");
+    }
+    else
+    {
+        printf("Failed to download %s: %s (HTTP %ld)\n", url, curl_easy_strerror(res), http_code);
+    }
+
+    free(chunk.memory);
+}
+
 static void PullTLEData(UIContext *ctx, AppConfig *cfg)
 {
-    FILE *out = fopen("data.tle", "w");
+    FILE *out = fopen("data.tle", "wb");
     if (out)
     {
         unsigned int mask = 0, ret_mask = 0, cust_mask = 0;
@@ -256,30 +326,31 @@ static void PullTLEData(UIContext *ctx, AppConfig *cfg)
         for (int i = 0; i < cfg->custom_tle_source_count; i++)
             if (cfg->custom_tle_sources[i].selected) cust_mask |= (1 << i);
 
-        fprintf(out, "# EPOCH:%ld MASK:%u CUST_MASK:%u RET_MASK:%u\n", (long)time(NULL), mask, cust_mask, ret_mask);
-        fclose(out);
+        fprintf(out, "# EPOCH:%ld MASK:%u CUST_MASK:%u RET_MASK:%u\r\n", (long)time(NULL), mask, cust_mask, ret_mask);
 
-        for (int i = 0; i < NUM_RETLECTOR_SOURCES; i++)
-            if (retlector_selected[i])
-            {
-                char cmd[512];
-                snprintf(cmd, sizeof(cmd), "curl -sL --compressed \"%s\" >> data.tle", RETLECTOR_SOURCES[i].url);
-                system(cmd);
-            }
-        for (int i = 0; i < 25; i++)
-            if (celestrak_selected[i])
-            {
-                char cmd[512];
-                snprintf(cmd, sizeof(cmd), "curl -sL --compressed \"%s\" >> data.tle", SOURCES[i].url);
-                system(cmd);
-            }
-        for (int i = 0; i < cfg->custom_tle_source_count; i++)
-            if (cfg->custom_tle_sources[i].selected)
-            {
-                char cmd[512];
-                snprintf(cmd, sizeof(cmd), "curl -sL --compressed \"%s\" >> data.tle", cfg->custom_tle_sources[i].url);
-                system(cmd);
-            }
+        CURL *curl = curl_easy_init();
+        if (curl)
+        {
+            for (int i = 0; i < NUM_RETLECTOR_SOURCES; i++)
+                if (retlector_selected[i])
+                    DownloadTLESource(curl, RETLECTOR_SOURCES[i].url, out);
+
+            for (int i = 0; i < 25; i++)
+                if (celestrak_selected[i])
+                    DownloadTLESource(curl, SOURCES[i].url, out);
+
+            for (int i = 0; i < cfg->custom_tle_source_count; i++)
+                if (cfg->custom_tle_sources[i].selected)
+                    DownloadTLESource(curl, cfg->custom_tle_sources[i].url, out);
+
+            curl_easy_cleanup(curl);
+        }
+        else
+        {
+            printf("Failed to initialize libcurl.\n");
+        }
+
+        fclose(out);
 
         if (ctx)
         {
