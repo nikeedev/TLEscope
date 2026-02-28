@@ -752,6 +752,23 @@ static void *active_tb_ptr = NULL;
 
 static void AdvancedTextBox(Rectangle bounds, char *text, int bufSize, bool *editMode, bool numeric)
 {
+    /* intercept keystrokes when text is fully selected before the GUI framework eats them */
+    if (*editMode && tb_select_all && active_tb_ptr == text)
+    {
+        int key = GetCharPressed();
+        if (key > 0)
+        {
+            text[0] = (char)key;
+            text[1] = '\0';
+            tb_select_all = false;
+        }
+        else if (IsKeyPressed(KEY_BACKSPACE) || IsKeyPressed(KEY_DELETE))
+        {
+            text[0] = '\0';
+            tb_select_all = false;
+        }
+    }
+
     if (GuiTextBox(bounds, text, bufSize, *editMode))
         *editMode = !*editMode;
 
@@ -813,12 +830,6 @@ static void AdvancedTextBox(Rectangle bounds, char *text, int bufSize, bool *edi
         if (tb_select_all)
         {
             DrawRectangle(bounds.x + 4, bounds.y + 4, MeasureTextEx(GuiGetFont(), text, GuiGetStyle(DEFAULT, TEXT_SIZE), 1).x, bounds.height - 8, Fade(BLUE, 0.5f));
-            int key = GetCharPressed();
-            if (key > 0 || IsKeyPressed(KEY_BACKSPACE) || IsKeyPressed(KEY_DELETE))
-            {
-                text[0] = '\0';
-                tb_select_all = false;
-            }
         }
 
         if (numeric)
