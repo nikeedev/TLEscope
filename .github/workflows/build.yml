@@ -61,9 +61,7 @@ jobs:
             mingw-w64-x86_64-zstd
             mingw-w64-x86_64-libssh2
             mingw-w64-x86_64-openssl
-            mingw-w64-x86_64-zstd
-            mingw-w64-x86_64-libssh2
-            mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-pkgconf
 
       - name: Link MinGW to Expected Makefile Path
         run: |
@@ -73,7 +71,12 @@ jobs:
           ln -s /mingw64 /usr/x86_64-w64-mingw32
 
       - name: Compile and Bundle Windows
-        run: make windows
+        run: |
+          # Generate the flags dynamically using MSYS2's native pkg-config, stripping the rogue zstd/R flags
+          CURL_FLAGS=$(pkg-config --libs --static libcurl | sed -e 's/-R[^ ]*//g' -e 's/-lzstd//g')
+          
+          # Pass CURL_FIX directly to make, which overrides the broken $(shell) assignment inside the Makefile
+          make windows CURL_FIX="$CURL_FLAGS"
 
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4
@@ -125,15 +128,6 @@ jobs:
           name: "Nightly Build"
           body: "Automated nightly build reflecting the latest commit."
           prerelease: true
-          files: |
-            TLEscope-Linux.zip
-            TLEscope-Windows.zip
-
-      - name: Publish Stable Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
           files: |
             TLEscope-Linux.zip
             TLEscope-Windows.zip
