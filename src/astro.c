@@ -206,6 +206,11 @@ void load_tle_data(const char *filename)
             line1[strcspn(line1, "\r\n")] = 0;
             line2[strcspn(line2, "\r\n")] = 0;
 
+            memset(&sat->norad_id, 0, sizeof(sat->norad_id));
+            memset(&sat->intl_designator, 0, sizeof(sat->intl_designator));
+            strncpy(sat->norad_id, line1 + 2, sizeof(sat->norad_id));
+            strncpy(sat->intl_designator, line1 + 9, sizeof(sat->intl_designator));
+
             char combined[768];
             snprintf(combined, sizeof(combined), "%s\n%s\n%s\n", line0, line1, line2);
 
