@@ -479,6 +479,7 @@ int main(void)
     /* resource loading phase */
     DrawLoadingScreen(0.1f, "Fetching TLE Data...", logoLTex);
     load_tle_data("data.tle");
+    load_manual_tles(&cfg);
     LoadSatSelection(); // restore active satellites
 
     DrawLoadingScreen(0.25f, "Initializing Textures...", logoTex);

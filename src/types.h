@@ -64,6 +64,8 @@ extern Marker home_location;
 extern Marker markers[MAX_MARKERS];
 extern int marker_count;
 
+#define MAX_MANUAL_TLES 20
+
 /* visual settings and colors */ 
 typedef struct
 {
@@ -85,6 +87,9 @@ typedef struct
 
     CustomTLESource custom_tle_sources[MAX_CUSTOM_TLE_SOURCES];
     int custom_tle_source_count;
+
+    char manual_tles[MAX_MANUAL_TLES][512];
+    int manual_tle_count;
 
     Color bg_color;
     Color orbit_normal;

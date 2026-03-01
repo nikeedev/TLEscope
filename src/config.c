@@ -199,6 +199,33 @@ void LoadAppConfig(const char *filename, AppConfig *config)
                 }
             }
 
+            // load manual TLEs
+            char *mt_ptr = strstr(text, "\"manual_tles\"");
+            if (mt_ptr)
+            {
+                char *array_start = strchr(mt_ptr, '[');
+                char *array_end = array_start ? strchr(array_start, ']') : NULL;
+                if (array_start && array_end)
+                {
+                    char *curr = array_start + 1;
+                    while (curr < array_end && config->manual_tle_count < MAX_MANUAL_TLES)
+                    {
+                        char *quote_start = strchr(curr, '"');
+                        if (!quote_start || quote_start > array_end) break;
+                        char *quote_end = strchr(quote_start + 1, '"');
+                        if (!quote_end || quote_end > array_end) break;
+
+                        int len = quote_end - (quote_start + 1);
+                        if (len >= 512) len = 511;
+                        strncpy(config->manual_tles[config->manual_tle_count], quote_start + 1, len);
+                        config->manual_tles[config->manual_tle_count][len] = '\0';
+                        config->manual_tle_count++;
+
+                        curr = quote_end + 1;
+                    }
+                }
+            }
+
             // load custom TLE sources
             char *cts_ptr = strstr(text, "\"custom_tle_sources\"");
             if (cts_ptr)
@@ -421,6 +448,16 @@ void SaveAppConfig(const char *filename, AppConfig *config)
         for (int i = 0; i < config->custom_tle_source_count; i++)
         {
             fprintf(file, "    {\"name\": \"%s\", \"url\": \"%s\"}%s\n", config->custom_tle_sources[i].name, config->custom_tle_sources[i].url, (i == config->custom_tle_source_count - 1) ? "" : ",");
+        }
+        fprintf(file, "    ],\n");
+    }
+
+    if (config->manual_tle_count > 0)
+    {
+        fprintf(file, "    \"manual_tles\": [\n");
+        for (int i = 0; i < config->manual_tle_count; i++)
+        {
+            fprintf(file, "        \"%s\"%s\n", config->manual_tles[i], (i == config->manual_tle_count - 1) ? "" : ",");
         }
         fprintf(file, "    ],\n");
     }

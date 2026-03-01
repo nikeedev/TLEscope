@@ -23,6 +23,7 @@ double get_current_real_time_epoch(void);
 double epoch_to_gmst(double epoch);
 void epoch_to_datetime_str(double epoch, char *buffer);
 void load_tle_data(const char *filename);
+void load_manual_tles(AppConfig *config);
 double normalize_epoch(double epoch);
 double get_unix_from_epoch(double epoch);
 

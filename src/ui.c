@@ -159,8 +159,12 @@ static bool celestrak_expanded = false;
 static bool retlector_expanded = false;
 static bool retlector_selected[NUM_RETLECTOR_SOURCES] = {false};
 static bool other_expanded = false;
+static bool manual_expanded = true;
 static bool celestrak_selected[25] = {false};
 static long data_tle_epoch = -1;
+
+static char new_tle_buf[512] = "";
+static bool edit_new_tle = false;
 
 static int selected_pass_idx = -1;
 static bool multi_pass_mode = true;
@@ -314,6 +318,24 @@ static void DownloadTLESource(CURL *curl, const char *url, FILE *out)
     free(chunk.memory);
 }
 
+static void ReloadTLEsLocally(UIContext *ctx, AppConfig *cfg)
+{
+    if (ctx)
+    {
+        *ctx->selected_sat = NULL;
+        ctx->hovered_sat = NULL;
+        ctx->active_sat = NULL;
+        *ctx->active_lock = LOCK_EARTH;
+    }
+    locked_pass_sat = NULL;
+    num_passes = 0;
+    last_pass_calc_sat = NULL;
+    sat_count = 0;
+    load_tle_data("data.tle");
+    load_manual_tles(cfg);
+    LoadSatSelection();
+}
+
 static void PullTLEData(UIContext *ctx, AppConfig *cfg)
 {
     FILE *out = fopen("data.tle", "wb");
@@ -365,6 +387,7 @@ static void PullTLEData(UIContext *ctx, AppConfig *cfg)
         last_pass_calc_sat = NULL;
         sat_count = 0;
         load_tle_data("data.tle");
+        load_manual_tles(cfg);
         if (sat_count > 500)
         {
             for (int i = 0; i < sat_count; i++)
@@ -592,7 +615,7 @@ static void FindSmartWindowPosition(float w, float h, AppConfig *cfg, float *out
 bool IsUITyping(void)
 {
     return edit_year || edit_month || edit_day || edit_hour || edit_min || edit_sec || edit_unix || edit_doppler_freq || edit_doppler_res || edit_doppler_file || edit_sat_search || edit_min_el ||
-           edit_hl_name || edit_hl_lat || edit_hl_lon || edit_hl_alt || edit_fps;
+           edit_hl_name || edit_hl_lat || edit_hl_lon || edit_hl_alt || edit_fps || edit_new_tle;
 }
 
 void ToggleTLEWarning(void) { show_tle_warning = !show_tle_warning; }
@@ -1469,6 +1492,7 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
             float total_height = 28 * cfg->ui_scale + (retlector_expanded ? NUM_RETLECTOR_SOURCES * 25 * cfg->ui_scale : 0);
             total_height += 28 * cfg->ui_scale + (celestrak_expanded ? 25 * 25 * cfg->ui_scale : 0);
             total_height += 28 * cfg->ui_scale + (other_expanded ? cfg->custom_tle_source_count * 25 * cfg->ui_scale : 0);
+            total_height += 28 * cfg->ui_scale + (manual_expanded ? (60 * cfg->ui_scale + cfg->manual_tle_count * 25 * cfg->ui_scale) : 0);
 
             Rectangle contentRec = {0, 0, tmMgrWindow.width - 20 * cfg->ui_scale, total_height};
             Rectangle viewRec = {0};
@@ -1577,6 +1601,73 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
                     current_y += 25 * cfg->ui_scale;
                 }
             }
+
+            Rectangle manualHead = {tm_x + 5 * cfg->ui_scale + tle_mgr_scroll.x, current_y, viewRec.width - 10 * cfg->ui_scale, 24 * cfg->ui_scale};
+            if (is_topmost && CheckCollisionPointRec(GetMousePosition(), manualHead) && CheckCollisionPointRec(GetMousePosition(), viewRec))
+            {
+                DrawRectangleRec(manualHead, ApplyAlpha(cfg->ui_secondary, 0.4f));
+                if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+                    manual_expanded = !manual_expanded;
+            }
+            else
+                DrawRectangleRec(manualHead, ApplyAlpha(cfg->ui_secondary, 0.15f));
+            DrawUIText(
+                customFont, TextFormat("%s  MANUAL TLE ENTRY", manual_expanded ? "v" : ">"), manualHead.x + 8 * cfg->ui_scale, manualHead.y + 4 * cfg->ui_scale, 16 * cfg->ui_scale,
+                cfg->ui_accent
+            );
+            current_y += 28 * cfg->ui_scale;
+            if (manual_expanded)
+            {
+                if (current_y + 25 * cfg->ui_scale >= viewRec.y && current_y <= viewRec.y + viewRec.height)
+                {
+                    AdvancedTextBox((Rectangle){tm_x + 10 * cfg->ui_scale + tle_mgr_scroll.x, current_y, viewRec.width - 70 * cfg->ui_scale, 24 * cfg->ui_scale}, new_tle_buf, 512, &edit_new_tle, false);
+                    if (GuiButton((Rectangle){tm_x + viewRec.width - 55 * cfg->ui_scale + tle_mgr_scroll.x, current_y, 45 * cfg->ui_scale, 24 * cfg->ui_scale}, "Add"))
+                    {
+                        if (strlen(new_tle_buf) > 10 && cfg->manual_tle_count < MAX_MANUAL_TLES)
+                        {
+                            char safe_tle[512] = {0};
+                            int j = 0;
+                            for(int i = 0; new_tle_buf[i] && j < 511; i++) {
+                                if (new_tle_buf[i] == '\n' || new_tle_buf[i] == '\r') {
+                                    if (j > 0 && safe_tle[j-1] != '|') safe_tle[j++] = '|';
+                                } else {
+                                    safe_tle[j++] = new_tle_buf[i];
+                                }
+                            }
+                            safe_tle[j] = '\0';
+                            strcpy(cfg->manual_tles[cfg->manual_tle_count++], safe_tle);
+                            SaveAppConfig("settings.json", cfg);
+                            ReloadTLEsLocally(ctx, cfg);
+                            new_tle_buf[0] = '\0';
+                        }
+                    }
+                }
+                current_y += 30 * cfg->ui_scale;
+
+                for (int i = 0; i < cfg->manual_tle_count; i++)
+                {
+                    if (current_y + 25 * cfg->ui_scale >= viewRec.y && current_y <= viewRec.y + viewRec.height)
+                    {
+                        char display_name[32] = {0};
+                        strncpy(display_name, cfg->manual_tles[i], 24);
+                        char *delim = strchr(display_name, '|');
+                        if (delim) *delim = '\0';
+
+                        GuiLabel((Rectangle){tm_x + 15 * cfg->ui_scale + tle_mgr_scroll.x, current_y, viewRec.width - 60 * cfg->ui_scale, 24 * cfg->ui_scale}, display_name);
+                        if (GuiButton((Rectangle){tm_x + viewRec.width - 40 * cfg->ui_scale + tle_mgr_scroll.x, current_y, 30 * cfg->ui_scale, 24 * cfg->ui_scale}, "X"))
+                        {
+                            for (int k = i; k < cfg->manual_tle_count - 1; k++) {
+                                strcpy(cfg->manual_tles[k], cfg->manual_tles[k+1]);
+                            }
+                            cfg->manual_tle_count--;
+                            SaveAppConfig("settings.json", cfg);
+                            ReloadTLEsLocally(ctx, cfg);
+                        }
+                    }
+                    current_y += 25 * cfg->ui_scale;
+                }
+            }
+
             EndScissorMode();
             break;
         }

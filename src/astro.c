@@ -146,6 +146,64 @@ void epoch_to_datetime_str(double epoch, char *buffer)
     sprintf(buffer, "%04d-%02d-%02d %02d:%02d:%02.0f UTC", year, month, day, h, m, seconds);
 }
 
+bool add_satellite_from_tle(const char* line0, const char* line1, const char* line2)
+{
+    if (sat_count >= MAX_SATELLITES) return false;
+    Satellite *sat = &satellites[sat_count];
+
+    strncpy(sat->name, line0, 24);
+    sat->name[24] = '\0';
+    for (int i = 23; i >= 0; i--)
+    {
+        if (sat->name[i] == ' ' || sat->name[i] == '\r' || sat->name[i] == '\n') sat->name[i] = '\0';
+        else break;
+    }
+
+    memset(&sat->norad_id, 0, sizeof(sat->norad_id));
+    memset(&sat->intl_designator, 0, sizeof(sat->intl_designator));
+    strncpy(sat->norad_id, line1 + 2, sizeof(sat->norad_id));
+    strncpy(sat->intl_designator, line1 + 9, sizeof(sat->intl_designator));
+
+    char combined[768];
+    snprintf(combined, sizeof(combined), "%s\n%s\n%s\n", line0, line1, line2);
+
+    struct TLEObject *parsed_objs = NULL;
+    int num_objs = 0;
+    ParseFileOrString(NULL, combined, &parsed_objs, &num_objs);
+
+    if (num_objs > 0 && parsed_objs != NULL)
+    {
+        double initial_r[3] = {0};
+        double initial_v[3] = {0};
+
+        ConvertTLEToSGP4(&sat->satrec, &parsed_objs[0], 0.0, initial_r, initial_v);
+        free(parsed_objs);
+
+        double raw_epoch = parse_tle_double(line1, 18, 14);
+        int yy = (int)(raw_epoch / 1000.0);
+        int year = (yy < 57) ? 2000 + yy : 1900 + yy;
+        sat->epoch_days = (year * 1000.0) + fmod(raw_epoch, 1000.0);
+        sat->epoch_unix = get_unix_from_epoch(sat->epoch_days);
+        sat->inclination = parse_tle_double(line2, 8, 8) * DEG2RAD;
+        sat->raan = parse_tle_double(line2, 17, 8) * DEG2RAD;
+
+        char ecc_buf[32] = "0.";
+        strncpy(ecc_buf + 2, line2 + 26, 7);
+        sat->eccentricity = atof(ecc_buf);
+
+        sat->arg_perigee = parse_tle_double(line2, 34, 8) * DEG2RAD;
+        sat->mean_anomaly = parse_tle_double(line2, 43, 8) * DEG2RAD;
+
+        double revs_per_day = parse_tle_double(line2, 52, 11);
+        sat->mean_motion = (revs_per_day * 2.0 * PI) / 86400.0;
+        sat->semi_major_axis = pow(MU / (sat->mean_motion * sat->mean_motion), 1.0 / 3.0);
+        sat->is_active = true;
+        sat_count++;
+        return true;
+    }
+    return false;
+}
+
 void load_tle_data(const char *filename)
 {
     FILE *file = fopen(filename, "r");
@@ -188,73 +246,35 @@ void load_tle_data(const char *filename)
 
         if (fgets(line1, sizeof(line1), file) && fgets(line2, sizeof(line2), file))
         {
-            if (sat_count >= MAX_SATELLITES)
-                break;
-            Satellite *sat = &satellites[sat_count];
-
-            strncpy(sat->name, line0, 24);
-            sat->name[24] = '\0';
-            for (int i = 23; i >= 0; i--)
-            {
-                if (sat->name[i] == ' ' || sat->name[i] == '\r' || sat->name[i] == '\n')
-                    sat->name[i] = '\0';
-                else
-                    break;
-            }
-
             line0[strcspn(line0, "\r\n")] = 0;
             line1[strcspn(line1, "\r\n")] = 0;
             line2[strcspn(line2, "\r\n")] = 0;
-
-            memset(&sat->norad_id, 0, sizeof(sat->norad_id));
-            memset(&sat->intl_designator, 0, sizeof(sat->intl_designator));
-            strncpy(sat->norad_id, line1 + 2, sizeof(sat->norad_id));
-            strncpy(sat->intl_designator, line1 + 9, sizeof(sat->intl_designator));
-
-            char combined[768];
-            snprintf(combined, sizeof(combined), "%s\n%s\n%s\n", line0, line1, line2);
-
-            struct TLEObject *parsed_objs = NULL;
-            int num_objs = 0;
-            ParseFileOrString(NULL, combined, &parsed_objs, &num_objs);
-
-            if (num_objs > 0 && parsed_objs != NULL)
-            {
-                double initial_r[3] = {0};
-                double initial_v[3] = {0};
-
-                ConvertTLEToSGP4(&sat->satrec, &parsed_objs[0], 0.0, initial_r, initial_v);
-                free(parsed_objs);
-            }
-            else
-            {
-                continue; // invalid parse gracefully skips
-            }
-
-            double raw_epoch = parse_tle_double(line1, 18, 14);
-            // converts the shimty yy to yyyy
-            int yy = (int)(raw_epoch / 1000.0);
-            int year = (yy < 57) ? 2000 + yy : 1900 + yy;
-            sat->epoch_days = (year * 1000.0) + fmod(raw_epoch, 1000.0);
-            sat->epoch_unix = get_unix_from_epoch(sat->epoch_days); // precalculated for perf
-            sat->inclination = parse_tle_double(line2, 8, 8) * DEG2RAD;
-            sat->raan = parse_tle_double(line2, 17, 8) * DEG2RAD;
-
-            char ecc_buf[32] = "0.";
-            strncpy(ecc_buf + 2, line2 + 26, 7);
-            sat->eccentricity = atof(ecc_buf);
-
-            sat->arg_perigee = parse_tle_double(line2, 34, 8) * DEG2RAD;
-            sat->mean_anomaly = parse_tle_double(line2, 43, 8) * DEG2RAD;
-
-            double revs_per_day = parse_tle_double(line2, 52, 11);
-            sat->mean_motion = (revs_per_day * 2.0 * PI) / 86400.0;
-            sat->semi_major_axis = pow(MU / (sat->mean_motion * sat->mean_motion), 1.0 / 3.0);
-            sat->is_active = true;
-            sat_count++;
+            add_satellite_from_tle(line0, line1, line2);
         }
     }
     fclose(file);
+}
+
+void load_manual_tles(AppConfig *config)
+{
+    for (int i = 0; i < config->manual_tle_count; i++)
+    {
+        char temp[512];
+        strcpy(temp, config->manual_tles[i]);
+
+        char *line0 = temp;
+        char *line1 = strchr(line0, '|');
+        if (!line1) continue;
+        *line1 = '\0';
+        line1++;
+
+        char *line2 = strchr(line1, '|');
+        if (!line2) continue;
+        *line2 = '\0';
+        line2++;
+
+        add_satellite_from_tle(line0, line1, line2);
+    }
 }
 
 // precalculated unix time passed down to prevent excessyear/day conversions
@@ -542,6 +562,33 @@ void CalculatePasses(Satellite *sat, double start_epoch)
                 }
             }
             t += coarse_step;
+        }
+
+        if (in_pass && num_passes < MAX_PASSES)
+        {
+            current_pass.los_epoch = t;
+            current_pass.num_pts = 0;
+            double step = (current_pass.los_epoch - current_pass.aos_epoch) / 399.0;
+            if (step > 0)
+            {
+                current_pass.max_el = -90.0f;
+                for (int k = 0; k < 400; k++)
+                {
+                    double pt = current_pass.aos_epoch + k * step;
+                    double pt_unix = get_unix_from_epoch(pt);
+                    double p_gmst = epoch_to_gmst(pt);
+                    double p_az, p_el;
+                    get_az_el(calculate_position(current_sat, pt_unix), p_gmst, home_location.lat, home_location.lon, home_location.alt, &p_az, &p_el);
+                    current_pass.path_pts[current_pass.num_pts++] = (Vector2){(float)p_az, (float)p_el};
+                    
+                    if (p_el > current_pass.max_el)
+                    {
+                        current_pass.max_el = (float)p_el;
+                        current_pass.max_el_epoch = pt;
+                    }
+                }
+            }
+            passes[num_passes++] = current_pass;
         }
     }
 
