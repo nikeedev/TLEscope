@@ -7,7 +7,8 @@
 # **TLEscope**
 ​TLEscope is a satellite visualization tool designed to transform Two-Line Element (TLE) sets into intuitive, interactive data. It provides a streamlined interface for tracking the current and future positions of orbital bodies across both 3D and 2D environments.
 
-<img width="2322" height="1138" alt="image" src="https://github.com/user-attachments/assets/1a3da0d2-0b1d-4b92-b149-9051f7744f81" />
+<img width="2381" height="1235" alt="image" src="https://github.com/user-attachments/assets/a410cb2c-28ef-4e7f-86b5-f8a68ccac478" />
+
 
 ### Not interested in the market pitch? [__Click Here__](https://github.com/aweeri/TLEscope?tab=readme-ov-file#download) to skip directly to downloads.
 
