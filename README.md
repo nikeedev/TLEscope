@@ -1,7 +1,14 @@
+<p align="center">
+  <a href="https://discord.gg/uDmNsuZR4W"><img src="https://img.shields.io/badge/Discord-%235865F2.svg?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a> <a href="https://ko-fi.com/aweeri"><img src="https://img.shields.io/badge/Ko--fi-F16061?style=for-the-badge&logo=ko-fi&logoColor=white" alt="Ko-fi"></a> <a href="https://deepwiki.com/aweeri/TLEscope"><img src="https://img.shields.io/badge/DeepWiki-000000?style=for-the-badge&logo=bookstack&logoColor=white" alt="DeepWiki"></a>
+  <br>
+  <a href="https://github.com/aweeri/TLEscope/stargazers"><img src="https://img.shields.io/github/stars/aweeri/TLEscope?style=for-the-badge&color=yellow" alt="Stars"></a> <a href="https://github.com/aweeri/TLEscope/network/members"><img src="https://img.shields.io/github/forks/aweeri/TLEscope?style=for-the-badge&color=lightgrey" alt="Forks"></a> <a href="https://github.com/aweeri/TLEscope/issues"><img src="https://img.shields.io/github/issues/aweeri/TLEscope?style=for-the-badge&color=orange" alt="Issues"></a> <a href="https://github.com/aweeri/TLEscope/graphs/contributors"><img src="https://img.shields.io/github/contributors/aweeri/TLEscope?style=for-the-badge&color=blueviolet" alt="Contributors"></a> <a href="https://github.com/aweeri/TLEscope/pulse"><img src="https://img.shields.io/github/last-commit/aweeri/TLEscope?style=for-the-badge&color=brightgreen" alt="Last Commit"></a>
+</p>
+
 # **TLEscope**
 ​TLEscope is a satellite visualization tool designed to transform Two-Line Element (TLE) sets into intuitive, interactive data. It provides a streamlined interface for tracking the current and future positions of orbital bodies across both 3D and 2D environments.
 
-<img width="2322" height="1138" alt="image" src="https://github.com/user-attachments/assets/1a3da0d2-0b1d-4b92-b149-9051f7744f81" />
+<img width="2381" height="1235" alt="image" src="https://github.com/user-attachments/assets/a410cb2c-28ef-4e7f-86b5-f8a68ccac478" />
+
 
 ### Not interested in the market pitch? [__Click Here__](https://github.com/aweeri/TLEscope?tab=readme-ov-file#download) to skip directly to downloads.
 
@@ -81,4 +88,7 @@ git clone https://github.com/aweeri/TLEscope
 cd TLEscope
 # Override CC_WIN if using local gcc instead of the cross-compiler
 make windows CC_WIN=gcc
+
+
 ```
+

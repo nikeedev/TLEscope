@@ -101,10 +101,11 @@ typedef enum
     WND_DOPPLER,
     WND_SAT_MGR,
     WND_TLE_MGR,
+    WND_SCOPE,
     WND_MAX
 } WindowID;
 
-static WindowID z_order[WND_MAX] = {WND_HELP, WND_SETTINGS, WND_TIME, WND_PASSES, WND_POLAR, WND_DOPPLER, WND_SAT_MGR, WND_TLE_MGR};
+static WindowID z_order[WND_MAX] = {WND_HELP, WND_SETTINGS, WND_TIME, WND_PASSES, WND_POLAR, WND_DOPPLER, WND_SAT_MGR, WND_TLE_MGR, WND_SCOPE};
 
 static void BringToFront(WindowID id)
 {
@@ -159,8 +160,12 @@ static bool celestrak_expanded = false;
 static bool retlector_expanded = false;
 static bool retlector_selected[NUM_RETLECTOR_SOURCES] = {false};
 static bool other_expanded = false;
+static bool manual_expanded = true;
 static bool celestrak_selected[25] = {false};
 static long data_tle_epoch = -1;
+
+static char new_tle_buf[512] = "";
+static bool edit_new_tle = false;
 
 static int selected_pass_idx = -1;
 static bool multi_pass_mode = true;
@@ -221,6 +226,31 @@ static bool ui_initialized = false;
 static bool show_first_run_dialog = false;
 static char text_fps[8] = "";
 static bool edit_fps = false;
+
+/* satellite scope variables */
+static bool show_scope_dialog = false;
+static bool opened_once_scope = false;
+static bool drag_scope = false;
+static Vector2 drag_scope_off = {0};
+static float sc_x = 400.0f, sc_y = 150.0f;
+
+static float scope_az = 180.0f;
+static float scope_el = 45.0f;
+static float scope_beam = 30.0f;
+
+static char text_scope_az[16] = "180.0";
+static char text_scope_el[16] = "45.0";
+static char text_scope_beam[16] = "30.0";
+
+static bool edit_scope_az = false;
+static bool edit_scope_el = false;
+static bool edit_scope_beam = false;
+
+static bool scope_lock = false;
+static bool scope_show_leo = true;
+static bool scope_show_heo = true;
+static bool scope_show_geo = true;
+static bool scope_show_trails = true;
 
 static void LoadTLEState(AppConfig *cfg)
 {
@@ -314,6 +344,24 @@ static void DownloadTLESource(CURL *curl, const char *url, FILE *out)
     free(chunk.memory);
 }
 
+static void ReloadTLEsLocally(UIContext *ctx, AppConfig *cfg)
+{
+    if (ctx)
+    {
+        *ctx->selected_sat = NULL;
+        ctx->hovered_sat = NULL;
+        ctx->active_sat = NULL;
+        *ctx->active_lock = LOCK_EARTH;
+    }
+    locked_pass_sat = NULL;
+    num_passes = 0;
+    last_pass_calc_sat = NULL;
+    sat_count = 0;
+    load_tle_data("data.tle");
+    load_manual_tles(cfg);
+    LoadSatSelection();
+}
+
 static void PullTLEData(UIContext *ctx, AppConfig *cfg)
 {
     FILE *out = fopen("data.tle", "wb");
@@ -365,6 +413,7 @@ static void PullTLEData(UIContext *ctx, AppConfig *cfg)
         last_pass_calc_sat = NULL;
         sat_count = 0;
         load_tle_data("data.tle");
+        load_manual_tles(cfg);
         if (sat_count > 500)
         {
             for (int i = 0; i < sat_count; i++)
@@ -553,6 +602,8 @@ static void FindSmartWindowPosition(float w, float h, AppConfig *cfg, float *out
         active[count++] = (Rectangle){sm_x, sm_y, 400 * cfg->ui_scale, 500 * cfg->ui_scale};
     if (show_tle_mgr_dialog)
         active[count++] = (Rectangle){tm_x, tm_y, 400 * cfg->ui_scale, 500 * cfg->ui_scale};
+    if (show_scope_dialog)
+        active[count++] = (Rectangle){sc_x, sc_y, 360 * cfg->ui_scale, 560 * cfg->ui_scale};
 
     float candidates_x[] = {margin, sw - w - margin};
     float step_y = 20.0f * cfg->ui_scale;
@@ -592,7 +643,7 @@ static void FindSmartWindowPosition(float w, float h, AppConfig *cfg, float *out
 bool IsUITyping(void)
 {
     return edit_year || edit_month || edit_day || edit_hour || edit_min || edit_sec || edit_unix || edit_doppler_freq || edit_doppler_res || edit_doppler_file || edit_sat_search || edit_min_el ||
-           edit_hl_name || edit_hl_lat || edit_hl_lon || edit_hl_alt || edit_fps;
+           edit_hl_name || edit_hl_lat || edit_hl_lon || edit_hl_alt || edit_fps || edit_new_tle || edit_scope_az || edit_scope_el || edit_scope_beam;
 }
 
 void ToggleTLEWarning(void) { show_tle_warning = !show_tle_warning; }
@@ -638,6 +689,8 @@ bool IsMouseOverUI(AppConfig *cfg)
         over_window = true;
     if (show_tle_mgr_dialog && CheckCollisionPointRec(GetMousePosition(), (Rectangle){tm_x, tm_y, 400 * cfg->ui_scale, 500 * cfg->ui_scale}))
         over_window = true;
+    if (show_scope_dialog && CheckCollisionPointRec(GetMousePosition(), (Rectangle){sc_x, sc_y, 360 * cfg->ui_scale, 560 * cfg->ui_scale}))
+        over_window = true;
     if (show_tle_warning &&
         CheckCollisionPointRec(
             GetMousePosition(), (Rectangle){(GetScreenWidth() - 480 * cfg->ui_scale) / 2.0f, (GetScreenHeight() - 160 * cfg->ui_scale) / 2.0f, 480 * cfg->ui_scale, 160 * cfg->ui_scale}
@@ -648,7 +701,7 @@ bool IsMouseOverUI(AppConfig *cfg)
         return true;
 
     float center_x_bottom = (GetScreenWidth() - (5 * 35 - 5) * cfg->ui_scale) / 2.0f;
-    float center_x_top = (GetScreenWidth() - (11 * 35 - 5) * cfg->ui_scale) / 2.0f;
+    float center_x_top = (GetScreenWidth() - (12 * 35 - 5) * cfg->ui_scale) / 2.0f;
 
     Rectangle btnRecs[] = {
         {center_x_top, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
@@ -662,13 +715,14 @@ bool IsMouseOverUI(AppConfig *cfg)
         {center_x_top + 280 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
         {center_x_top + 315 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
         {center_x_top + 350 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
+        {center_x_top + 385 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
         {center_x_bottom, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
         {center_x_bottom + 35 * cfg->ui_scale, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
         {center_x_bottom + 70 * cfg->ui_scale, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
         {center_x_bottom + 105 * cfg->ui_scale, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale},
         {center_x_bottom + 140 * cfg->ui_scale, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale}
     };
-    for (int i = 0; i < 16; i++)
+    for (int i = 0; i < 17; i++)
     {
         if (CheckCollisionPointRec(GetMousePosition(), btnRecs[i]))
             return true;
@@ -752,6 +806,23 @@ static void *active_tb_ptr = NULL;
 
 static void AdvancedTextBox(Rectangle bounds, char *text, int bufSize, bool *editMode, bool numeric)
 {
+    /* intercept keystrokes when text is fully selected before the GUI framework eats them */
+    if (*editMode && tb_select_all && active_tb_ptr == text)
+    {
+        int key = GetCharPressed();
+        if (key > 0)
+        {
+            text[0] = (char)key;
+            text[1] = '\0';
+            tb_select_all = false;
+        }
+        else if (IsKeyPressed(KEY_BACKSPACE) || IsKeyPressed(KEY_DELETE))
+        {
+            text[0] = '\0';
+            tb_select_all = false;
+        }
+    }
+
     if (GuiTextBox(bounds, text, bufSize, *editMode))
         *editMode = !*editMode;
 
@@ -813,12 +884,6 @@ static void AdvancedTextBox(Rectangle bounds, char *text, int bufSize, bool *edi
         if (tb_select_all)
         {
             DrawRectangle(bounds.x + 4, bounds.y + 4, MeasureTextEx(GuiGetFont(), text, GuiGetStyle(DEFAULT, TEXT_SIZE), 1).x, bounds.height - 8, Fade(BLUE, 0.5f));
-            int key = GetCharPressed();
-            if (key > 0 || IsKeyPressed(KEY_BACKSPACE) || IsKeyPressed(KEY_DELETE))
-            {
-                text[0] = '\0';
-                tb_select_all = false;
-            }
         }
 
         if (numeric)
@@ -837,6 +902,11 @@ static void AdvancedTextBox(Rectangle bounds, char *text, int bufSize, bool *edi
 /* main ui rendering loop */
 void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
 {
+    *ctx->show_scope = show_scope_dialog;
+    *ctx->scope_az = scope_az;
+    *ctx->scope_el = scope_el;
+    *ctx->scope_beam = scope_beam;
+
     if (IsKeyPressed(KEY_ESCAPE))
     {
         if (IsUITyping())
@@ -846,6 +916,7 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
             edit_sat_search = edit_min_el = false;
             edit_hl_name = edit_hl_lat = edit_hl_lon = edit_hl_alt = false;
             edit_fps = false;
+            edit_scope_az = edit_scope_el = edit_scope_beam = false;
         }
         else if (!show_first_run_dialog)
         {
@@ -863,6 +934,7 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
     Rectangle dopplerWindow = {dop_x, dop_y, 320 * cfg->ui_scale, 480 * cfg->ui_scale};
     Rectangle smWindow = {sm_x, sm_y, 400 * cfg->ui_scale, 500 * cfg->ui_scale};
     Rectangle tmMgrWindow = {tm_x, tm_y, 400 * cfg->ui_scale, 500 * cfg->ui_scale};
+    Rectangle scopeWindow = {sc_x, sc_y, 360 * cfg->ui_scale, 560 * cfg->ui_scale};
 
     /* process Z-Order mouse events safely by evaluating from top to bottom */
     int top_hovered_wnd = -1;
@@ -906,6 +978,11 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
             break;
         }
         if (id == WND_TLE_MGR && show_tle_mgr_dialog && CheckCollisionPointRec(m, tmMgrWindow))
+        {
+            top_hovered_wnd = id;
+            break;
+        }
+        if (id == WND_SCOPE && show_scope_dialog && CheckCollisionPointRec(m, scopeWindow))
         {
             top_hovered_wnd = id;
             break;
@@ -960,12 +1037,17 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
                 drag_tle_mgr = true;
                 drag_tle_mgr_off = Vector2Subtract(m, (Vector2){tm_x, tm_y});
             }
+            else if (top == WND_SCOPE && CheckCollisionPointRec(m, (Rectangle){sc_x, sc_y, scopeWindow.width - 30 * cfg->ui_scale, 24 * cfg->ui_scale}))
+            {
+                drag_scope = true;
+                drag_scope_off = Vector2Subtract(m, (Vector2){sc_x, sc_y});
+            }
         }
     }
 
     if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
     {
-        drag_help = drag_settings = drag_time_dialog = drag_passes = drag_polar = drag_doppler = drag_sat_mgr = drag_tle_mgr = false;
+        drag_help = drag_settings = drag_time_dialog = drag_passes = drag_polar = drag_doppler = drag_sat_mgr = drag_tle_mgr = drag_scope = false;
     }
 
     if (show_passes_dialog)
@@ -1189,19 +1271,21 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
     float buttons_w = (5 * 35 - 5) * cfg->ui_scale;
     float center_x_bottom = (GetScreenWidth() - buttons_w) / 2.0f;
     float btn_start_x = center_x_bottom;
-    float center_x_top = (GetScreenWidth() - (11 * 35 - 5) * cfg->ui_scale) / 2.0f;
+    float center_x_top = (GetScreenWidth() - (12 * 35 - 5) * cfg->ui_scale) / 2.0f;
 
+    /* top/bottom bar buttons */
     Rectangle btnSet = {center_x_top, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
     Rectangle btnTLEMgr = {center_x_top + 35 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
     Rectangle btnSatMgr = {center_x_top + 70 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
     Rectangle btnPasses = {center_x_top + 105 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
     Rectangle btnPolar = {center_x_top + 140 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
-    Rectangle btnHelp = {center_x_top + 175 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
-    Rectangle btn2D3D = {center_x_top + 210 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
-    Rectangle btnHideUnselected = {center_x_top + 245 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
-    Rectangle btnSunlit = {center_x_top + 280 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
-    Rectangle btnSlantRange = {center_x_top + 315 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
-    Rectangle btnFrame = {center_x_top + 350 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
+    Rectangle btnScope = {center_x_top + 175 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
+    Rectangle btnHelp = {center_x_top + 210 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
+    Rectangle btn2D3D = {center_x_top + 245 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
+    Rectangle btnHideUnselected = {center_x_top + 280 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
+    Rectangle btnSunlit = {center_x_top + 315 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
+    Rectangle btnSlantRange = {center_x_top + 350 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
+    Rectangle btnFrame = {center_x_top + 385 * cfg->ui_scale, 10 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
     Rectangle btnRewind = {btn_start_x, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
     Rectangle btnPlayPause = {btn_start_x + 35 * cfg->ui_scale, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
     Rectangle btnFastForward = {btn_start_x + 70 * cfg->ui_scale, GetScreenHeight() - 40 * cfg->ui_scale, 30 * cfg->ui_scale, 30 * cfg->ui_scale};
@@ -1310,6 +1394,19 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
         }
         show_polar_dialog = !show_polar_dialog;
         BringToFront(WND_POLAR);
+    }
+    HIGHLIGHT_END()
+
+    HIGHLIGHT_START(show_scope_dialog)
+    if (GuiButton(btnScope, "#103#"))
+    {
+        if (!show_scope_dialog && !opened_once_scope)
+        {
+            FindSmartWindowPosition(360 * cfg->ui_scale, 560 * cfg->ui_scale, cfg, &sc_x, &sc_y);
+            opened_once_scope = true;
+        }
+        show_scope_dialog = !show_scope_dialog;
+        BringToFront(WND_SCOPE);
     }
     HIGHLIGHT_END()
 
@@ -1458,6 +1555,7 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
             float total_height = 28 * cfg->ui_scale + (retlector_expanded ? NUM_RETLECTOR_SOURCES * 25 * cfg->ui_scale : 0);
             total_height += 28 * cfg->ui_scale + (celestrak_expanded ? 25 * 25 * cfg->ui_scale : 0);
             total_height += 28 * cfg->ui_scale + (other_expanded ? cfg->custom_tle_source_count * 25 * cfg->ui_scale : 0);
+            total_height += 28 * cfg->ui_scale + (manual_expanded ? (60 * cfg->ui_scale + cfg->manual_tle_count * 25 * cfg->ui_scale) : 0);
 
             Rectangle contentRec = {0, 0, tmMgrWindow.width - 20 * cfg->ui_scale, total_height};
             Rectangle viewRec = {0};
@@ -1566,6 +1664,84 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
                     current_y += 25 * cfg->ui_scale;
                 }
             }
+
+            Rectangle manualHead = {tm_x + 5 * cfg->ui_scale + tle_mgr_scroll.x, current_y, viewRec.width - 10 * cfg->ui_scale, 24 * cfg->ui_scale};
+            if (is_topmost && CheckCollisionPointRec(GetMousePosition(), manualHead) && CheckCollisionPointRec(GetMousePosition(), viewRec))
+            {
+                DrawRectangleRec(manualHead, ApplyAlpha(cfg->ui_secondary, 0.4f));
+                if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+                    manual_expanded = !manual_expanded;
+            }
+            else
+                DrawRectangleRec(manualHead, ApplyAlpha(cfg->ui_secondary, 0.15f));
+            DrawUIText(
+                customFont, TextFormat("%s  MANUAL TLE ENTRY", manual_expanded ? "v" : ">"), manualHead.x + 8 * cfg->ui_scale, manualHead.y + 4 * cfg->ui_scale, 16 * cfg->ui_scale,
+                cfg->ui_accent
+            );
+            current_y += 28 * cfg->ui_scale;
+            if (manual_expanded)
+            {
+                if (current_y + 25 * cfg->ui_scale >= viewRec.y && current_y <= viewRec.y + viewRec.height)
+                {
+                    AdvancedTextBox((Rectangle){tm_x + 10 * cfg->ui_scale + tle_mgr_scroll.x, current_y, viewRec.width - 70 * cfg->ui_scale, 24 * cfg->ui_scale}, new_tle_buf, 512, &edit_new_tle, false);
+                    if (GuiButton((Rectangle){tm_x + viewRec.width - 55 * cfg->ui_scale + tle_mgr_scroll.x, current_y, 45 * cfg->ui_scale, 24 * cfg->ui_scale}, "Add"))
+                    {
+                        if (strlen(new_tle_buf) > 10 && cfg->manual_tle_count < MAX_MANUAL_TLES)
+                        {
+                            char safe_tle[512] = {0};
+                            int j = 0;
+                            for(int i = 0; new_tle_buf[i] && j < 511; i++) {
+                                if (new_tle_buf[i] == '\n' || new_tle_buf[i] == '\r') {
+                                    if (j > 0 && safe_tle[j-1] != '|') safe_tle[j++] = '|';
+                                } else {
+                                    safe_tle[j++] = new_tle_buf[i];
+                                }
+                            }
+                            safe_tle[j] = '\0';
+                            strcpy(cfg->manual_tles[cfg->manual_tle_count++], safe_tle);
+                            SaveAppConfig("settings.json", cfg);
+                            ReloadTLEsLocally(ctx, cfg);
+                            new_tle_buf[0] = '\0';
+                        }
+                    }
+                }
+                current_y += 30 * cfg->ui_scale;
+
+                for (int i = 0; i < cfg->manual_tle_count; i++)
+                {
+                    if (current_y + 25 * cfg->ui_scale >= viewRec.y && current_y <= viewRec.y + viewRec.height)
+                    {
+                        char display_name[32] = {0};
+                        strncpy(display_name, cfg->manual_tles[i], 24);
+                        char *delim = strchr(display_name, '|');
+                        if (delim) *delim = '\0';
+
+                        GuiLabel((Rectangle){tm_x + 15 * cfg->ui_scale + tle_mgr_scroll.x, current_y, viewRec.width - 95 * cfg->ui_scale, 24 * cfg->ui_scale}, display_name);
+                        
+                        if (GuiButton((Rectangle){tm_x + viewRec.width - 75 * cfg->ui_scale + tle_mgr_scroll.x, current_y, 30 * cfg->ui_scale, 24 * cfg->ui_scale}, "C"))
+                        {
+                            char copy_buf[512];
+                            strcpy(copy_buf, cfg->manual_tles[i]);
+                            for (int c = 0; copy_buf[c] != '\0'; c++) {
+                                if (copy_buf[c] == '|') copy_buf[c] = '\n';
+                            }
+                            SetClipboardText(copy_buf);
+                        }
+
+                        if (GuiButton((Rectangle){tm_x + viewRec.width - 40 * cfg->ui_scale + tle_mgr_scroll.x, current_y, 30 * cfg->ui_scale, 24 * cfg->ui_scale}, "X"))
+                        {
+                            for (int k = i; k < cfg->manual_tle_count - 1; k++) {
+                                strcpy(cfg->manual_tles[k], cfg->manual_tles[k+1]);
+                            }
+                            cfg->manual_tle_count--;
+                            SaveAppConfig("settings.json", cfg);
+                            ReloadTLEsLocally(ctx, cfg);
+                        }
+                    }
+                    current_y += 25 * cfg->ui_scale;
+                }
+            }
+
             EndScissorMode();
             break;
         }
@@ -2401,6 +2577,290 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
                 DrawUIText(customFont, "No valid pass selected.", dop_x + 20 * cfg->ui_scale, dop_y + 60 * cfg->ui_scale, 16 * cfg->ui_scale, cfg->text_main);
             break;
         }
+
+case WND_SCOPE:
+        {
+            if (!show_scope_dialog) break;
+
+            /* tab cycling for text inputs */
+            if (IsKeyPressed(KEY_TAB)) {
+                if (edit_scope_az) { edit_scope_az = false; edit_scope_el = true; }
+                else if (edit_scope_el) { edit_scope_el = false; edit_scope_beam = true; }
+                else if (edit_scope_beam) { edit_scope_beam = false; edit_scope_az = true; }
+                else { edit_scope_az = true; }
+            }
+
+            /* handle window dragging and snapping */
+            if (drag_scope)
+            {
+                sc_x = GetMousePosition().x - drag_scope_off.x;
+                sc_y = GetMousePosition().y - drag_scope_off.y;
+                SnapWindow(&sc_x, &sc_y, scopeWindow.width, scopeWindow.height, cfg);
+            }
+            if (GuiWindowBox(scopeWindow, "#103# Satellite Scope"))
+                show_scope_dialog = false;
+
+            /* auto-aim scope if locked to a satellite */
+            if (scope_lock && *ctx->selected_sat) {
+                double l_az, l_el;
+                Vector3 sat_pos = (*ctx->selected_sat)->is_active ? (*ctx->selected_sat)->current_pos : calculate_position(*ctx->selected_sat, get_unix_from_epoch(*ctx->current_epoch));
+                get_az_el(sat_pos, ctx->gmst_deg, home_location.lat, home_location.lon, home_location.alt, &l_az, &l_el);
+                scope_az = (float)l_az;
+                scope_el = (float)l_el;
+                snprintf(text_scope_az, sizeof(text_scope_az), "%.1f", scope_az);
+                snprintf(text_scope_el, sizeof(text_scope_el), "%.1f", scope_el);
+            }
+
+            float scope_radius = 160 * cfg->ui_scale;
+            Vector2 center = {sc_x + scopeWindow.width / 2.0f, sc_y + 40 * cfg->ui_scale + scope_radius};
+
+            // push state back to context for 3d render
+            *ctx->show_scope = true;
+            *ctx->scope_az = scope_az;
+            *ctx->scope_el = scope_el;
+            *ctx->scope_beam = scope_beam;
+
+            /* draw the viewfinder and horizon grid */
+            DrawCircleV(center, scope_radius, (Color){10, 15, 25, 255});
+
+            for (int y = (int)(center.y - scope_radius); y <= (int)(center.y + scope_radius); y++) {
+                float dy_screen = y - center.y; 
+                float ang_offset = -(dy_screen / scope_radius) * (scope_beam / 2.0f); 
+                float approx_el = scope_el + ang_offset;
+                
+                // shade area below horizon
+                if (approx_el < 0) {
+                    float half_width = sqrtf(fmaxf(0.0f, scope_radius * scope_radius - dy_screen * dy_screen));
+                    DrawLine((int)(center.x - half_width), y, (int)(center.x + half_width), y, (Color){45, 30, 20, 255});
+                }
+            }
+
+            // crosshairs and borders
+            DrawLineV((Vector2){center.x, center.y - scope_radius}, (Vector2){center.x, center.y + scope_radius}, ApplyAlpha(cfg->ui_secondary, 0.4f));
+            DrawLineV((Vector2){center.x - scope_radius, center.y}, (Vector2){center.x + scope_radius, center.y}, ApplyAlpha(cfg->ui_secondary, 0.4f));
+            DrawCircleLines(center.x, center.y, scope_radius * 0.5f, ApplyAlpha(cfg->ui_secondary, 0.2f));
+            DrawCircleLines(center.x, center.y, scope_radius, cfg->ui_secondary);
+
+            Satellite* hover_sat_scope = NULL;
+            float min_hover_dist = 9999.0f;
+            Vector2 hover_pos = {0};
+
+            /* setup eci vectors for SPEEDY culling */
+            float rad_beam_half = (scope_beam / 2.0f) * DEG2RAD;
+            float cos_beam_half = cosf(rad_beam_half);
+            float c_az_rad = scope_az * DEG2RAD;
+            float c_el_rad = scope_el * DEG2RAD;
+
+            float h_lat_rad = home_location.lat * DEG2RAD;
+            float h_lon_rad = (home_location.lon + ctx->gmst_deg) * DEG2RAD;
+            float obs_rad = EARTH_RADIUS_KM + home_location.alt / 1000.0f;
+            
+            Vector3 O_eci = {
+                cosf(h_lat_rad) * cosf(h_lon_rad) * obs_rad,
+                sinf(h_lat_rad) * obs_rad,
+                -cosf(h_lat_rad) * sinf(h_lon_rad) * obs_rad
+            };
+
+            Vector3 up = Vector3Normalize(O_eci);
+            Vector3 east = {-sinf(h_lon_rad), 0.0f, -cosf(h_lon_rad)};
+            Vector3 north = {-cosf(h_lon_rad) * sinf(h_lat_rad), cosf(h_lat_rad), sinf(h_lon_rad) * sinf(h_lat_rad)};
+
+            Vector3 scope_dir = Vector3Add(
+                Vector3Add(Vector3Scale(north, cosf(c_el_rad) * cosf(c_az_rad)), 
+                           Vector3Scale(east, cosf(c_el_rad) * sinf(c_az_rad))),
+                Vector3Scale(up, sinf(c_el_rad))
+            );
+            scope_dir = Vector3Normalize(scope_dir);
+
+            double current_unix = get_unix_from_epoch(*ctx->current_epoch);
+            Vector3 sun_dir = {0};
+            if (cfg->highlight_sunlit) {
+                sun_dir = Vector3Normalize(calculate_sun_position(*ctx->current_epoch));
+            }
+            
+            double past_epoch = *ctx->current_epoch - (60.0 / 86400.0);
+            double past_unix = get_unix_from_epoch(past_epoch);
+            double past_gmst = epoch_to_gmst(past_epoch);
+
+            /* iterate all sats, cull, and project valid ones onto the 2d scope */
+            for (int i = 0; i < sat_count; i++) {
+                double revs_per_day = (satellites[i].mean_motion * 86400.0) / (2.0 * PI);
+                bool is_leo = (revs_per_day > 11.25);
+                bool is_geo = (revs_per_day >= 0.99 && revs_per_day <= 1.01);
+                bool is_heo = !is_leo && !is_geo;
+
+                if (is_leo && !scope_show_leo) continue;
+                if (is_heo && !scope_show_heo) continue;
+                if (is_geo && !scope_show_geo) continue;
+
+                Vector3 sat_pos = satellites[i].is_active ? satellites[i].current_pos : calculate_position(&satellites[i], current_unix);
+
+                Vector3 V = Vector3Subtract(sat_pos, O_eci);
+                float dist = Vector3Length(V);
+                if (dist < 0.001f) continue;
+                
+                Vector3 V_norm = Vector3Scale(V, 1.0f / dist);
+                float cos_theta = Vector3DotProduct(V_norm, scope_dir);
+
+                // check if inside the cone
+                if (cos_theta >= cos_beam_half) {
+                    double s_az, s_el;
+                    get_az_el(sat_pos, ctx->gmst_deg, home_location.lat, home_location.lon, home_location.alt, &s_az, &s_el);
+
+                    float s_az_rad = s_az * DEG2RAD;
+                    float s_el_rad = s_el * DEG2RAD;
+
+                    if (cos_theta > 1.0f) cos_theta = 1.0f;
+                    float theta = acosf(cos_theta);
+
+                    float dx = cosf(s_el_rad) * sinf(s_az_rad - c_az_rad);
+                    float dy = cosf(c_el_rad) * sinf(s_el_rad) - sinf(c_el_rad) * cosf(s_el_rad) * cosf(s_az_rad - c_az_rad);
+                    
+                    float r_dist = (theta / rad_beam_half) * scope_radius;
+                    float angle = atan2f(-dy, dx); 
+                    
+                    Vector2 dot_pos = { center.x + r_dist * cosf(angle), center.y + r_dist * sinf(angle) };
+
+                    // figure out what color the dot should be
+                    Color dotColor = WHITE;
+                    if (cfg->highlight_sunlit) {
+                        bool eclipsed = is_sat_eclipsed(sat_pos, sun_dir);
+                        dotColor = eclipsed ? GRAY : GOLD;
+                        if (!satellites[i].is_active) dotColor = ApplyAlpha(dotColor, 0.4f);
+                    } else {
+                        dotColor = satellites[i].is_active ? cfg->ui_accent : cfg->ui_secondary;
+                    }
+
+                    if (*ctx->selected_sat == &satellites[i]) {
+                        DrawCircleV(dot_pos, 4.0f * cfg->ui_scale, cfg->sat_selected);
+                    } else {
+                        DrawCircleV(dot_pos, 2.0f * cfg->ui_scale, dotColor);
+                    }
+
+                    // draw movement vectors if requested
+                    if (scope_show_trails) {
+                        Vector3 past_pos = calculate_position(&satellites[i], past_unix);
+                        double p_az, p_el;
+                        get_az_el(past_pos, past_gmst, home_location.lat, home_location.lon, home_location.alt, &p_az, &p_el);
+
+                        float p_az_rad = p_az * DEG2RAD;
+                        float p_el_rad = p_el * DEG2RAD;
+
+                        float p_cos_theta = sinf(c_el_rad) * sinf(p_el_rad) + cosf(c_el_rad) * cosf(p_el_rad) * cosf(p_az_rad - c_az_rad);
+                        if (p_cos_theta < -1.0f) p_cos_theta = -1.0f;
+                        if (p_cos_theta > 1.0f) p_cos_theta = 1.0f;
+                        float p_theta = acosf(p_cos_theta);
+
+                        float p_dx = cosf(p_el_rad) * sinf(p_az_rad - c_az_rad);
+                        float p_dy = cosf(c_el_rad) * sinf(p_el_rad) - sinf(c_el_rad) * cosf(p_el_rad) * cosf(p_az_rad - c_az_rad);
+                        
+                        float p_r_dist = (p_theta / rad_beam_half) * scope_radius;
+                        float p_angle = atan2f(-p_dy, p_dx); 
+                        
+                        Vector2 past_dot_pos = { center.x + p_r_dist * cosf(p_angle), center.y + p_r_dist * sinf(p_angle) };
+
+                        // clip trail if it's out of the viewfinder circle
+                        if (p_r_dist > scope_radius) {
+                            float t = (scope_radius - r_dist) / (p_r_dist - r_dist);
+                            past_dot_pos.x = dot_pos.x + t * (past_dot_pos.x - dot_pos.x);
+                            past_dot_pos.y = dot_pos.y + t * (past_dot_pos.y - dot_pos.y);
+                        }
+                        
+                        DrawLineEx(past_dot_pos, dot_pos, 1.5f * cfg->ui_scale, ApplyAlpha(dotColor, 0.4f));
+                    }
+
+                    // pick closest satellite for hover tooltip
+                    float hover_dist = Vector2Distance(GetMousePosition(), dot_pos);
+                    if (hover_dist < 8.0f * cfg->ui_scale && hover_dist < min_hover_dist) {
+                        min_hover_dist = hover_dist;
+                        hover_sat_scope = &satellites[i];
+                        hover_pos = dot_pos;
+                    }
+                }
+            }
+
+            /* render tooltip for hovered satellite */
+            if (hover_sat_scope && is_topmost) {
+                if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+                    *ctx->selected_sat = hover_sat_scope;
+                }
+                char tt[128];
+                snprintf(tt, sizeof(tt), "%s\nNORAD: %.6s", hover_sat_scope->name, hover_sat_scope->norad_id);
+                Vector2 tt_size = MeasureTextEx(customFont, tt, 14 * cfg->ui_scale, 1.0f);
+                
+                float t_x = hover_pos.x + 10 * cfg->ui_scale;
+                float t_y = hover_pos.y;
+                if (t_x + tt_size.x + 8 * cfg->ui_scale > sc_x + scopeWindow.width) t_x = hover_pos.x - tt_size.x - 10 * cfg->ui_scale;
+                
+                DrawRectangle(t_x, t_y, tt_size.x + 8 * cfg->ui_scale, tt_size.y + 8 * cfg->ui_scale, ApplyAlpha(cfg->ui_bg, 0.9f));
+                DrawRectangleLines(t_x, t_y, tt_size.x + 8 * cfg->ui_scale, tt_size.y + 8 * cfg->ui_scale, cfg->ui_secondary);
+                DrawUIText(customFont, tt, t_x + 4 * cfg->ui_scale, t_y + 4 * cfg->ui_scale, 14 * cfg->ui_scale, cfg->text_main);
+            }
+
+            /* bottom control panel area */
+            float ctrl_y = center.y + scope_radius + 15 * cfg->ui_scale;
+            
+            // sep toggle button from standard button styles
+            int old_toggle_base = GuiGetStyle(TOGGLE, BASE_COLOR_PRESSED);
+            int old_toggle_bord = GuiGetStyle(TOGGLE, BORDER_COLOR_PRESSED);
+            int old_toggle_text = GuiGetStyle(TOGGLE, TEXT_COLOR_PRESSED);
+
+            GuiSetStyle(TOGGLE, BASE_COLOR_PRESSED, GuiGetStyle(DEFAULT, BASE_COLOR_NORMAL));
+            GuiSetStyle(TOGGLE, BORDER_COLOR_PRESSED, ColorToInt(cfg->ui_accent));
+            GuiSetStyle(TOGGLE, TEXT_COLOR_PRESSED, ColorToInt(cfg->ui_accent));
+
+            GuiToggle((Rectangle){sc_x + 15 * cfg->ui_scale, ctrl_y, scopeWindow.width - 60 * cfg->ui_scale, 24 * cfg->ui_scale}, "Lock Selected Satellite", &scope_lock);
+
+            GuiSetStyle(TOGGLE, BASE_COLOR_PRESSED, old_toggle_base);
+            GuiSetStyle(TOGGLE, BORDER_COLOR_PRESSED, old_toggle_bord);
+            GuiSetStyle(TOGGLE, TEXT_COLOR_PRESSED, old_toggle_text);
+
+            // visibility toggle for quick additions to satellite manager
+            if (!*ctx->selected_sat) GuiDisable();
+            bool is_vis = *ctx->selected_sat && (*ctx->selected_sat)->is_active;
+            if (GuiButton((Rectangle){sc_x + scopeWindow.width - 39 * cfg->ui_scale, ctrl_y, 24 * cfg->ui_scale, 24 * cfg->ui_scale}, is_vis ? "#44#" : "#45#")) {
+                if (*ctx->selected_sat) {
+                    (*ctx->selected_sat)->is_active = !(*ctx->selected_sat)->is_active;
+                    SaveSatSelection();
+                }
+            }
+            if (!*ctx->selected_sat) GuiEnable();
+
+            ctrl_y += 30 * cfg->ui_scale;
+
+            if (scope_lock) GuiDisable();
+
+            GuiLabel((Rectangle){sc_x + 15 * cfg->ui_scale, ctrl_y, 40 * cfg->ui_scale, 24 * cfg->ui_scale}, "Az:");
+            GuiSlider((Rectangle){sc_x + 55 * cfg->ui_scale, ctrl_y, 200 * cfg->ui_scale, 20 * cfg->ui_scale}, "", "", &scope_az, 0.0f, 360.0f);
+            AdvancedTextBox((Rectangle){sc_x + 265 * cfg->ui_scale, ctrl_y, 80 * cfg->ui_scale, 24 * cfg->ui_scale}, text_scope_az, 16, &edit_scope_az, true);
+            if (!edit_scope_az && !scope_lock) snprintf(text_scope_az, sizeof(text_scope_az), "%.1f", scope_az);
+            else if (edit_scope_az && !scope_lock) scope_az = atof(text_scope_az);
+            ctrl_y += 30 * cfg->ui_scale;
+
+            GuiLabel((Rectangle){sc_x + 15 * cfg->ui_scale, ctrl_y, 40 * cfg->ui_scale, 24 * cfg->ui_scale}, "El:");
+            GuiSlider((Rectangle){sc_x + 55 * cfg->ui_scale, ctrl_y, 200 * cfg->ui_scale, 20 * cfg->ui_scale}, "", "", &scope_el, -90.0f, 90.0f);
+            AdvancedTextBox((Rectangle){sc_x + 265 * cfg->ui_scale, ctrl_y, 80 * cfg->ui_scale, 24 * cfg->ui_scale}, text_scope_el, 16, &edit_scope_el, true);
+            if (!edit_scope_el && !scope_lock) snprintf(text_scope_el, sizeof(text_scope_el), "%.1f", scope_el);
+            else if (edit_scope_el && !scope_lock) scope_el = atof(text_scope_el);
+            ctrl_y += 30 * cfg->ui_scale;
+            
+            if (scope_lock) GuiEnable();
+
+            GuiLabel((Rectangle){sc_x + 15 * cfg->ui_scale, ctrl_y, 40 * cfg->ui_scale, 24 * cfg->ui_scale}, "Beam:");
+            GuiSlider((Rectangle){sc_x + 55 * cfg->ui_scale, ctrl_y, 200 * cfg->ui_scale, 20 * cfg->ui_scale}, "", "", &scope_beam, 1.0f, 120.0f);
+            AdvancedTextBox((Rectangle){sc_x + 265 * cfg->ui_scale, ctrl_y, 80 * cfg->ui_scale, 24 * cfg->ui_scale}, text_scope_beam, 16, &edit_scope_beam, true);
+            if (!edit_scope_beam) snprintf(text_scope_beam, sizeof(text_scope_beam), "%.1f", scope_beam);
+            else scope_beam = atof(text_scope_beam);
+            ctrl_y += 35 * cfg->ui_scale;
+
+            GuiCheckBox((Rectangle){sc_x + 15 * cfg->ui_scale, ctrl_y, 20 * cfg->ui_scale, 20 * cfg->ui_scale}, "LEO", &scope_show_leo);
+            GuiCheckBox((Rectangle){sc_x + 90 * cfg->ui_scale, ctrl_y, 20 * cfg->ui_scale, 20 * cfg->ui_scale}, "HEO/MEO", &scope_show_heo);
+            GuiCheckBox((Rectangle){sc_x + 200 * cfg->ui_scale, ctrl_y, 20 * cfg->ui_scale, 20 * cfg->ui_scale}, "GEO", &scope_show_geo);
+            GuiCheckBox((Rectangle){sc_x + 275 * cfg->ui_scale, ctrl_y, 20 * cfg->ui_scale, 20 * cfg->ui_scale}, "Trails", &scope_show_trails);
+            
+            break;
+        }
+
         default:
             break;
         }
@@ -2520,12 +2980,13 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
         GetScreenHeight() - 35 * cfg->ui_scale, 20 * cfg->ui_scale, cfg->text_main
     );
 
-    const char *tt_texts[16] = {
+    const char *tt_texts[17] = {
         "Settings",
         "TLE Manager",
         "Satellite Manager",
         "Pass Predictor",
         "Polar Plot",
+        "Satellite Scope",
         "Help & Controls",
         "Toggle 2D/3D View",
         "Toggle Unselected Orbits",
@@ -2539,10 +3000,10 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
         "Set Date & Time"
     };
 
-    for (int i = 0; i < 16; i++)
+    for (int i = 0; i < 17; i++)
     {
         if (top_hovered_wnd == -1 && CheckCollisionPointRec(
-                                         GetMousePosition(), (Rectangle[]){btnSet, btnTLEMgr, btnSatMgr, btnPasses, btnPolar, btnHelp, btn2D3D, btnHideUnselected, btnSunlit, btnSlantRange, btnFrame, btnRewind,
+                                         GetMousePosition(), (Rectangle[]){btnSet, btnTLEMgr, btnSatMgr, btnPasses, btnPolar, btnScope, btnHelp, btn2D3D, btnHideUnselected, btnSunlit, btnSlantRange, btnFrame, btnRewind,
                                                                            btnPlayPause, btnFastForward, btnNow, btnClock}[i]
                                      ))
         {
