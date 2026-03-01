@@ -16,7 +16,11 @@ LDFLAGS_WIN = $(LIB_WIN_PATH) -lraylib -Wl,-Bstatic $(CURL_FIX) -lssp_nonshared 
 DIST_LINUX = dist/TLEscope-Linux
 DIST_WIN   = dist/TLEscope-Windows
 
-.PHONY: all linux windows clean build bin
+INSTALL_DIR ?= /opt/TLEscope
+LINK_DIR    ?= /usr/local/bin
+APP_DIR     ?= /usr/share/applications
+
+.PHONY: all linux windows clean build bin install uninstall
 
 all: linux
 
@@ -61,3 +65,35 @@ bin:
 
 clean:
 	rm -rf build bin dist
+
+install: linux
+	@echo "Installing to $(DESTDIR)$(INSTALL_DIR)..."
+	install -d $(DESTDIR)$(INSTALL_DIR)
+	cp -r $(DIST_LINUX)/* $(DESTDIR)$(INSTALL_DIR)/
+	chmod 755 $(DESTDIR)$(INSTALL_DIR)/TLEscope
+	install -d $(DESTDIR)$(LINK_DIR)
+	@echo '#!/bin/sh' > $(DESTDIR)$(LINK_DIR)/TLEscope
+	@echo 'USER_DIR="$${XDG_CONFIG_HOME:-$$HOME/.config}/TLEscope"' >> $(DESTDIR)$(LINK_DIR)/TLEscope
+	@echo 'mkdir -p "$$USER_DIR"' >> $(DESTDIR)$(LINK_DIR)/TLEscope
+	@echo 'ln -sfn "$(INSTALL_DIR)/themes" "$$USER_DIR/themes"' >> $(DESTDIR)$(LINK_DIR)/TLEscope
+	@echo 'ln -sfn "$(INSTALL_DIR)/logo.png" "$$USER_DIR/logo.png"' >> $(DESTDIR)$(LINK_DIR)/TLEscope
+	@echo 'if [ ! -f "$$USER_DIR/settings.json" ] && [ -f "$(INSTALL_DIR)/settings.json" ]; then cp "$(INSTALL_DIR)/settings.json" "$$USER_DIR/settings.json"; fi' >> $(DESTDIR)$(LINK_DIR)/TLEscope
+	@echo 'if [ ! -f "$$USER_DIR/data.tle" ] && [ -f "$(INSTALL_DIR)/data.tle" ]; then cp "$(INSTALL_DIR)/data.tle" "$$USER_DIR/data.tle"; fi' >> $(DESTDIR)$(LINK_DIR)/TLEscope
+	@echo 'cd "$$USER_DIR" && exec "$(INSTALL_DIR)/TLEscope" "$$@"' >> $(DESTDIR)$(LINK_DIR)/TLEscope
+	chmod 755 $(DESTDIR)$(LINK_DIR)/TLEscope
+	install -d $(DESTDIR)$(APP_DIR)
+	@echo '[Desktop Entry]' > $(DESTDIR)$(APP_DIR)/TLEscope.desktop
+	@echo 'Type=Application' >> $(DESTDIR)$(APP_DIR)/TLEscope.desktop
+	@echo 'Name=TLEscope' >> $(DESTDIR)$(APP_DIR)/TLEscope.desktop
+	@echo 'Exec=TLEscope' >> $(DESTDIR)$(APP_DIR)/TLEscope.desktop
+	@echo 'Icon=$(INSTALL_DIR)/logo.png' >> $(DESTDIR)$(APP_DIR)/TLEscope.desktop
+	@echo 'Terminal=false' >> $(DESTDIR)$(APP_DIR)/TLEscope.desktop
+	@echo 'Categories=Utility;Science;' >> $(DESTDIR)$(APP_DIR)/TLEscope.desktop
+	@echo "Install complete. You can now execute 'TLEscope' from anywhere."
+
+uninstall:
+	@echo "Uninstalling..."
+	rm -f $(DESTDIR)$(APP_DIR)/TLEscope.desktop
+	rm -f $(DESTDIR)$(LINK_DIR)/TLEscope
+	rm -rf $(DESTDIR)$(INSTALL_DIR)
+	@echo "Uninstall complete."
