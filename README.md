@@ -64,7 +64,7 @@ make linux      # Results in dist/TLEscope-Linux/
 ```
 **Arch-based systems**
 ```
-sudo pacman -Syu
+sudo pacman -Syy
 sudo pacman -S --needed base-devel git alsa-lib libx11 libxrandr libxi mesa glu libxcursor libxinerama wayland libxkbcommon curl
 # If cross-compiling for Windows:
 sudo pacman -S mingw-w64-gcc
