@@ -861,9 +861,22 @@ int main(void)
                 }
                 if (!is_typing)
                 {
-                    target_camDistance -= GetMouseWheelMove() * (target_camDistance * 0.1f);
-                    if (target_camDistance < draw_earth_radius + 1.0f)
-                        target_camDistance = draw_earth_radius + 1.0f;
+                    float wheel = GetMouseWheelMove();
+                    if (wheel != 0)
+                    {
+                        if (IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT))
+                        {
+                            Camera3DParams.fovy -= wheel * 1.0f;
+                            if (Camera3DParams.fovy < 10.0f) Camera3DParams.fovy = 10.0f;
+                            if (Camera3DParams.fovy > 120.0f) Camera3DParams.fovy = 120.0f;
+                        }
+                        else
+                        {
+                            target_camDistance -= wheel * (target_camDistance * 0.1f);
+                            if (target_camDistance < draw_earth_radius + 1.0f)
+                                target_camDistance = draw_earth_radius + 1.0f;
+                        }
+                    }
                 }
             }
 
