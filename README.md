@@ -81,4 +81,7 @@ git clone https://github.com/aweeri/TLEscope
 cd TLEscope
 # Override CC_WIN if using local gcc instead of the cross-compiler
 make windows CC_WIN=gcc
+
+
 ```
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/aweeri/TLEscope)
