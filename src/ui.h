@@ -26,6 +26,10 @@ typedef struct
     bool *picking_home;
     bool *exit_app;
     bool *is_ecliptic_frame;
+    bool *show_scope;
+    float *scope_az;
+    float *scope_el;
+    float *scope_beam;
     Satellite **selected_sat;
     Satellite *hovered_sat;
     Satellite *active_sat;

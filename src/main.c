@@ -604,6 +604,11 @@ int main(void)
     bool is_ecliptic_frame = false;
     float current_ecliptic_angle = 0.0f;
 
+    bool show_scope = false;
+    float scope_az = 180.0f;
+    float scope_el = 45.0f;
+    float scope_beam = 30.0f;
+
     Satellite *hovered_sat = NULL;
     Satellite *selected_sat = NULL;
     TargetLock active_lock = LOCK_EARTH;
@@ -1417,8 +1422,8 @@ int main(void)
                     for (int k = 0; k < FP_PTS; k++)
                     {
                         int next = (k + 1) % FP_PTS;
-                        Vector3 p1 = Vector3Scale(fp_grid[i][k], 1.01f / DRAW_SCALE), p2 = Vector3Scale(fp_grid[i][next], 1.01f / DRAW_SCALE);
-                        Vector3 p3 = Vector3Scale(fp_grid[i + 1][k], 1.01f / DRAW_SCALE), p4 = Vector3Scale(fp_grid[i + 1][next], 1.01f / DRAW_SCALE);
+                        Vector3 p1 = Vector3Scale(fp_grid[i][k], 1.02f / DRAW_SCALE), p2 = Vector3Scale(fp_grid[i][next], 1.02f / DRAW_SCALE);
+                        Vector3 p3 = Vector3Scale(fp_grid[i + 1][k], 1.02f / DRAW_SCALE), p4 = Vector3Scale(fp_grid[i + 1][next], 1.02f / DRAW_SCALE);
                         DrawTriangle3D(p1, p3, p2, cfg.footprint_bg);
                         DrawTriangle3D(p2, p3, p4, cfg.footprint_bg);
                     }
@@ -1426,7 +1431,7 @@ int main(void)
                 for (int k = 0; k < FP_PTS; k++)
                 {
                     int next = (k + 1) % FP_PTS;
-                    DrawLine3D(Vector3Scale(fp_grid[FP_RINGS][k], 1.01f / DRAW_SCALE), Vector3Scale(fp_grid[FP_RINGS][next], 1.01f / DRAW_SCALE), cfg.footprint_border);
+                    DrawLine3D(Vector3Scale(fp_grid[FP_RINGS][k], 1.02f / DRAW_SCALE), Vector3Scale(fp_grid[FP_RINGS][next], 1.02f / DRAW_SCALE), cfg.footprint_border);
                 }
             }
 
@@ -1457,6 +1462,53 @@ int main(void)
                 Vector3 h_pos3d = {cosf(h_lat_rad) * cosf(h_lon_rad) * draw_earth_radius, sinf(h_lat_rad) * draw_earth_radius, -cosf(h_lat_rad) * sinf(h_lon_rad) * draw_earth_radius};
                 Vector3 s_pos3d = Vector3Scale(active_sat->current_pos, 1.0f / DRAW_SCALE);
                 DrawLine3D(h_pos3d, s_pos3d, ApplyAlpha(cfg.ui_accent, 0.6f));
+            }
+
+            if (show_scope)
+            {
+                float h_lat_rad = home_location.lat * DEG2RAD;
+                float h_lon_rad = (home_location.lon + gmst_deg + cfg.earth_rotation_offset) * DEG2RAD;
+                
+                Vector3 h_pos3d = {
+                    cosf(h_lat_rad) * cosf(h_lon_rad) * draw_earth_radius, 
+                    sinf(h_lat_rad) * draw_earth_radius, 
+                    -cosf(h_lat_rad) * sinf(h_lon_rad) * draw_earth_radius
+                };
+
+                Vector3 up = Vector3Normalize(h_pos3d);
+                Vector3 east = {-sinf(h_lon_rad), 0.0f, -cosf(h_lon_rad)};
+                Vector3 north = {-cosf(h_lon_rad) * sinf(h_lat_rad), cosf(h_lat_rad), sinf(h_lon_rad) * sinf(h_lat_rad)};
+
+                float el_rad = scope_el * DEG2RAD;
+                float az_rad = scope_az * DEG2RAD;
+
+                Vector3 dir = Vector3Add(
+                    Vector3Add(Vector3Scale(north, cosf(el_rad) * cosf(az_rad)), 
+                               Vector3Scale(east, cosf(el_rad) * sinf(az_rad))),
+                    Vector3Scale(up, sinf(el_rad))
+                );
+                dir = Vector3Normalize(dir);
+
+                /* extend out to GEO-ish distance */
+                float cone_length = 25000.0f / DRAW_SCALE; 
+                float cone_radius = cone_length * tanf((scope_beam / 2.0f) * DEG2RAD);
+                Vector3 center_end = Vector3Add(h_pos3d, Vector3Scale(dir, cone_length));
+
+                Vector3 perp1 = Vector3CrossProduct(dir, up);
+                if (Vector3Length(perp1) < 0.01f) perp1 = Vector3CrossProduct(dir, north);
+                perp1 = Vector3Normalize(perp1);
+                Vector3 perp2 = Vector3CrossProduct(dir, perp1);
+
+                Color lineCol = ApplyAlpha(cfg.ui_accent, 0.4f);
+
+                for (int i = 0; i < 4; i++) {
+                    /* calculate 4 corners at 45, 135, 225, 315 degrees */
+                    float angle = (i * PI / 2.0f) + (PI / 4.0f); 
+                    Vector3 pt = Vector3Add(center_end, 
+                                    Vector3Add(Vector3Scale(perp1, cosf(angle) * cone_radius),
+                                               Vector3Scale(perp2, sinf(angle) * cone_radius)));
+                    DrawLine3D(h_pos3d, pt, lineCol);
+                }
             }
 
             EndMode3D();
@@ -1616,6 +1668,10 @@ int main(void)
             .hide_unselected = &hide_unselected,
             .picking_home = &picking_home,
             .is_ecliptic_frame = &is_ecliptic_frame,
+            .show_scope = &show_scope,
+            .scope_az = &scope_az,
+            .scope_el = &scope_el,
+            .scope_beam = &scope_beam,
             .selected_sat = &selected_sat,
             .hovered_sat = hovered_sat,
             .active_sat = active_sat,
