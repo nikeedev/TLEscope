@@ -1787,6 +1787,8 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
             GuiCheckBox((Rectangle){sw_x + 10 * cfg->ui_scale, sy, 20 * cfg->ui_scale, 20 * cfg->ui_scale}, "Show Markers", &cfg->show_markers);
             sy += 25 * cfg->ui_scale;
             GuiCheckBox((Rectangle){sw_x + 10 * cfg->ui_scale, sy, 20 * cfg->ui_scale, 20 * cfg->ui_scale}, "Scattering", &cfg->show_scattering);
+            sy += 25 * cfg->ui_scale;
+            GuiCheckBox((Rectangle){sw_x + 10 * cfg->ui_scale, sy, 20 * cfg->ui_scale, 20 * cfg->ui_scale}, "VSync", &cfg->hint_vsync);            
             sy += 30 * cfg->ui_scale;
 
             DrawLine(sw_x + 10 * cfg->ui_scale, sy, sw_x + settingsWindow.width - 10 * cfg->ui_scale, sy, cfg->ui_secondary);
@@ -1808,10 +1810,14 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
 
             GuiLabel((Rectangle){sw_x + 10 * cfg->ui_scale, sy, 40 * cfg->ui_scale, 24 * cfg->ui_scale}, "Alt:");
             AdvancedTextBox((Rectangle){sw_x + 60 * cfg->ui_scale, sy, 170 * cfg->ui_scale, 24 * cfg->ui_scale}, text_hl_alt, 32, &edit_hl_alt, true);
-            sy += 30 * cfg->ui_scale;
+            
+            if(!cfg->hint_vsync)
+            {
+                sy += 30 * cfg->ui_scale;
+                GuiLabel((Rectangle){sw_x + 10 * cfg->ui_scale, sy, 80 * cfg->ui_scale, 24 * cfg->ui_scale}, "Max FPS:");
+                AdvancedTextBox((Rectangle){sw_x + 90 * cfg->ui_scale, sy, 140 * cfg->ui_scale, 24 * cfg->ui_scale}, text_fps, 8, &edit_fps, true);
+            }
 
-            GuiLabel((Rectangle){sw_x + 10 * cfg->ui_scale, sy, 80 * cfg->ui_scale, 24 * cfg->ui_scale}, "Max FPS:");
-            AdvancedTextBox((Rectangle){sw_x + 90 * cfg->ui_scale, sy, 140 * cfg->ui_scale, 24 * cfg->ui_scale}, text_fps, 8, &edit_fps, true);
             sy += 35 * cfg->ui_scale;
 
             if (GuiButton((Rectangle){sw_x + 10 * cfg->ui_scale, sy, 220 * cfg->ui_scale, 28 * cfg->ui_scale}, *ctx->picking_home ? "Cancel Picking" : "Pick on Map"))

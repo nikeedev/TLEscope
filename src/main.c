@@ -217,6 +217,7 @@ static AppConfig cfg = {
     .highlight_sunlit = false,
     .show_slant_range = false,
     .show_scattering = false,
+    .hint_vsync = false,
     .bg_color = {0, 0, 0, 255},
     .text_main = {255, 255, 255, 255},
     .theme = "default",
@@ -784,6 +785,13 @@ int main(void)
         Vector2 mouseDelta = GetMouseDelta();
         hovered_sat = NULL;
 
+        /* vsync config check */
+        if (cfg.hint_vsync != IsWindowState(FLAG_VSYNC_HINT))
+        {
+            if (cfg.hint_vsync) SetWindowState(FLAG_VSYNC_HINT);
+            else ClearWindowState(FLAG_VSYNC_HINT);   
+        }
+        
         /* handle picking and camera in 2d mode */
         if (is_2d_view)
         {

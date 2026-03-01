@@ -81,6 +81,7 @@ typedef struct
     bool highlight_sunlit;
     bool show_slant_range;
     bool show_scattering;
+    bool hint_vsync;
     bool first_run_done;
 
     CustomTLESource custom_tle_sources[MAX_CUSTOM_TLE_SOURCES];
