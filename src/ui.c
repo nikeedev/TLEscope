@@ -1653,7 +1653,18 @@ void DrawGUI(UIContext *ctx, AppConfig *cfg, Font customFont)
                         char *delim = strchr(display_name, '|');
                         if (delim) *delim = '\0';
 
-                        GuiLabel((Rectangle){tm_x + 15 * cfg->ui_scale + tle_mgr_scroll.x, current_y, viewRec.width - 60 * cfg->ui_scale, 24 * cfg->ui_scale}, display_name);
+                        GuiLabel((Rectangle){tm_x + 15 * cfg->ui_scale + tle_mgr_scroll.x, current_y, viewRec.width - 95 * cfg->ui_scale, 24 * cfg->ui_scale}, display_name);
+                        
+                        if (GuiButton((Rectangle){tm_x + viewRec.width - 75 * cfg->ui_scale + tle_mgr_scroll.x, current_y, 30 * cfg->ui_scale, 24 * cfg->ui_scale}, "C"))
+                        {
+                            char copy_buf[512];
+                            strcpy(copy_buf, cfg->manual_tles[i]);
+                            for (int c = 0; copy_buf[c] != '\0'; c++) {
+                                if (copy_buf[c] == '|') copy_buf[c] = '\n';
+                            }
+                            SetClipboardText(copy_buf);
+                        }
+
                         if (GuiButton((Rectangle){tm_x + viewRec.width - 40 * cfg->ui_scale + tle_mgr_scroll.x, current_y, 30 * cfg->ui_scale, 24 * cfg->ui_scale}, "X"))
                         {
                             for (int k = i; k < cfg->manual_tle_count - 1; k++) {
