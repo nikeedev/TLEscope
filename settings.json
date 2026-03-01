@@ -13,6 +13,7 @@
     "highlight_sunlit": false,
     "show_slant_range": false,
     "show_scattering": false,
+    "hint_vsync": false,
     "first_run_done": false,
     "custom_tle_sources": [
         {"name": "Test set (all active) (no rate limit)", "url": "https://raw.githubusercontent.com/aweeri/celestrak-snapshot/refs/heads/main/data.tle"},

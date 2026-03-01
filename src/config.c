@@ -37,8 +37,9 @@ void LoadAppConfig(const char *filename, AppConfig *config)
     config->show_statistics = false;  // default
     config->highlight_sunlit = false; // default
     config->show_slant_range = false; // default
-    config->show_scattering = false; // default
+    config->show_scattering = false;  // default
     config->first_run_done = false;   // default
+    config->hint_vsync = false;       // default
     config->custom_tle_source_count = 0;
 
     if (FileExists(filename))
@@ -185,6 +186,18 @@ void LoadAppConfig(const char *filename, AppConfig *config)
                 if (true_ptr && (!comma || true_ptr < comma))
                 {
                     config->show_scattering = true;
+                }
+            }
+
+            // parse vsync toggle
+            char *vsync_ptr = strstr(text, "\"hint_vsync\"");
+            if (vsync_ptr)
+            {
+                char *comma = strchr(vsync_ptr, ',');
+                char *true_ptr = strstr(vsync_ptr, "true");
+                if (true_ptr && (!comma || true_ptr < comma))
+                {
+                    config->hint_vsync = true;
                 }
             }
 
@@ -440,6 +453,7 @@ void SaveAppConfig(const char *filename, AppConfig *config)
     fprintf(file, "    \"highlight_sunlit\": %s,\n", config->highlight_sunlit ? "true" : "false");
     fprintf(file, "    \"show_slant_range\": %s,\n", config->show_slant_range ? "true" : "false");
     fprintf(file, "    \"show_scattering\": %s,\n", config->show_scattering ? "true" : "false");
+    fprintf(file, "    \"hint_vsync\": %s,\n", config->hint_vsync ? "true" : "false");
     fprintf(file, "    \"first_run_done\": %s,\n", config->first_run_done ? "true" : "false");
 
     if (config->custom_tle_source_count > 0)
