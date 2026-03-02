@@ -45,11 +45,18 @@ You can find the roadmap here: [ROADMAP.md](https://github.com/aweeri/TLEscope/b
 ### **​Development & Contributions**
 ​TLEscope is an evolving project with a rich roadmap. We welcome bug reports, feature requests, and code contributions via the project's issue tracker.
 
-### **Download**
+### **Download from GitHub**
 To download TLEscope, grab a portable zip from the [Relases tab](https://github.com/aweeri/TLEscope/releases), then extract it's contents into a directory of choice.
 You can choose between nightly and complete relases:
 - [**Stable**](https://github.com/aweeri/TLEscope/releases) relases are properly versioned notable milestone builds. They may not have the latest features, but they are a stable and safe choice. 
 - [**Nightly**](https://github.com/aweeri/TLEscope/releases/tag/nightly) relases are always up to date with the latest commits, as long as they [compile correctly](https://github.com/aweeri/TLEscope/actions). Do not complain too much if things don't work as expected.
+
+### **Download from a package manager**
+TLEscope provides packages on following systems:
+- Arch Linux:
+  - AUR
+    * [`tlescope-bin`](https://aur.archlinux.org/packages/tlescope-bin): Downloads and install the latest stable version of TLEscope from [Releases](https://github.com/aweeri/TLEscope/releases).
+    * [`tlescope-git`](https://aur.archlinux.org/packages/tlescope-bin): Clones the latest commit of this repository and installs on the system.
 
 ### **Building From Source**
 TLEscope uses gcc for Linux builds and cross-compiles for Windows using x86_64-w64-mingw32-gcc.
